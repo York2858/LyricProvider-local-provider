@@ -1,21 +1,29 @@
 *.iml
 .gradle
 /local.properties
+local.properties
 
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-/.kotlin/sessions
-/.kotlin/errors
-/.idea/pandoc.xml
+# IDE
+/.idea/
+/.kotlin/
 
-.DS_Store
+# Build outputs
 /build
 **/build/
 /captures
+*.apk
+*.aab
+*.hprof
+
+# Native build
 .externalNativeBuild
 .cxx
-local.properties
+
+# Signing secrets
+*.jks
+*.keystore
+keystore.properties
+
+# OS
+.DS_Store
+Thumbs.db

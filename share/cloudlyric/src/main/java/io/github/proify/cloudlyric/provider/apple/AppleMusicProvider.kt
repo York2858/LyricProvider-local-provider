@@ -7,18 +7,25 @@
 package io.github.proify.cloudlyric.provider.apple
 
 import io.github.proify.cloudlyric.CatalogProvider
+import io.github.proify.cloudlyric.CatalogAccessException
 import io.github.proify.cloudlyric.CatalogPage
 import io.github.proify.cloudlyric.CatalogTrack
 import io.github.proify.cloudlyric.LyricsProvider
 import io.github.proify.cloudlyric.LyricsResult
 import io.github.proify.cloudlyric.provider.internal.ProviderSupport
+import io.github.proify.extensions.net.HttpStatusException
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.util.Locale
+import java.io.IOException
 
 class AppleMusicProvider(
     private val config: AppleMusicConfig,
-    private val developerTokenProvider: AppleMusicDeveloperTokenProvider = AppleMusicDeveloperTokenProvider()
+    private val developerTokenProvider: AppleMusicDeveloperTokenProvider = AppleMusicDeveloperTokenProvider.shared,
+    private val httpGet: suspend (String, Map<String, String>) -> String = { url, headers ->
+        ProviderSupport.httpGetOrThrow(url, headers, readTimeoutMs = 12_000)
+    }
 ) : LyricsProvider, CatalogProvider {
     companion object {
         const val ID = "AppleMusic"
@@ -33,8 +40,7 @@ class AppleMusicProvider(
     override suspend fun searchCatalog(query: String, pageSize: Int, cursor: String?): CatalogPage {
         val size = pageSize.coerceIn(1, 25)
         val offset = cursor?.toIntOrNull()?.coerceAtLeast(0) ?: 0
-        val response = requestSearch(query, size, false, offset)
-            ?: requestSearch(query, size, true, offset) ?: error("Apple Music 搜索暂不可用")
+        val response = requestSearch(query, size, offset) ?: error("Apple Music 搜索暂不可用")
         val songs = response.results.songs?.data.orEmpty()
         return CatalogPage(songs.map { song -> CatalogTrack(song.id, LyricsResult(
             trackName = song.attributes.name, artistName = song.attributes.artistName,
@@ -47,7 +53,7 @@ class AppleMusicProvider(
     override suspend fun loadLyrics(track: CatalogTrack): LyricsResult? {
         if (!config.isConfigured()) error("请先配置 Apple Music 账号")
         val lines = buildLyricsTypePriority(track.hints["synced"] == "true").firstNotNullOfOrNull { type ->
-            requestLyrics(track.key, type, false) ?: requestLyrics(track.key, type, true)
+            requestLyrics(track.key, type)
         }
         if (lines == null && track.hints["hasLyrics"] != "false") error("歌词获取失败，请重试或检查账号")
         return lines?.takeIf { it.isNotEmpty() }?.let { track.metadata.copy(rich = it) }
@@ -74,8 +80,7 @@ class AppleMusicProvider(
         val searchLimit = maxOf(safeLimit * 5, 20).coerceAtMost(50)
         val candidateSongs = candidateKeywords
             .flatMap { keyword ->
-                val searchResponse = requestSearch(keyword, searchLimit, forceRefreshToken = false)
-                    ?: requestSearch(keyword, searchLimit, forceRefreshToken = true)
+                val searchResponse = requestSearch(keyword, searchLimit)
                     ?: return@flatMap emptyList()
                 searchResponse.results.songs?.data.orEmpty()
             }
@@ -95,12 +100,7 @@ class AppleMusicProvider(
             val richLines = lyricsTypes.firstNotNullOfOrNull { lyricsType ->
                 requestLyrics(
                     songId = song.id,
-                    lyricsType = lyricsType,
-                    forceRefreshToken = false
-                ) ?: requestLyrics(
-                    songId = song.id,
-                    lyricsType = lyricsType,
-                    forceRefreshToken = true
+                    lyricsType = lyricsType
                 )
             } ?: return@mapNotNull null
 
@@ -118,10 +118,8 @@ class AppleMusicProvider(
     private suspend fun requestSearch(
         keyword: String,
         limit: Int,
-        forceRefreshToken: Boolean,
         offset: Int = 0
     ): AppleMusicSearchResponse? {
-        val developerToken = resolveDeveloperToken(forceRefreshToken).takeIf { it.isNotBlank() } ?: return null
         val storefront = normalizeStorefront(config.storefront)
         val language = normalizeLanguage(config.language)
 
@@ -135,18 +133,7 @@ class AppleMusicProvider(
             )
         )}"
 
-        val body = ProviderSupport.httpGet(
-            url = url,
-            headers = mapOf(
-                "Authorization" to "Bearer $developerToken",
-                "Origin" to "https://music.apple.com",
-                "Referer" to "https://music.apple.com/",
-                "User-Agent" to ProviderSupport.DEFAULT_USER_AGENT,
-                "Accept-Encoding" to "identity"
-            ),
-            connectTimeoutMs = 8_000,
-            readTimeoutMs = 10_000
-        ) ?: return null
+        val body = authenticatedGet(url) ?: return null
 
         return runCatching {
             ProviderSupport.json.decodeFromString<AppleMusicSearchResponse>(body)
@@ -155,10 +142,8 @@ class AppleMusicProvider(
 
     private suspend fun requestLyrics(
         songId: String,
-        lyricsType: String,
-        forceRefreshToken: Boolean
+        lyricsType: String
     ): List<io.github.proify.lyricon.lyric.model.RichLyricLine>? {
-        val developerToken = resolveDeveloperToken(forceRefreshToken).takeIf { it.isNotBlank() } ?: return null
         val mediaUserToken = config.mediaUserToken.trim().takeIf { it.isNotBlank() } ?: return null
         val storefront = normalizeStorefront(config.storefront)
         val language = normalizeLanguage(config.language)
@@ -170,19 +155,7 @@ class AppleMusicProvider(
             )
         )}"
 
-        val body = ProviderSupport.httpGet(
-            url = url,
-            headers = mapOf(
-                "Authorization" to "Bearer $developerToken",
-                "Cookie" to "media-user-token=$mediaUserToken",
-                "Origin" to "https://music.apple.com",
-                "Referer" to "https://music.apple.com/",
-                "User-Agent" to ProviderSupport.DEFAULT_USER_AGENT,
-                "Accept-Encoding" to "identity"
-            ),
-            connectTimeoutMs = 8_000,
-            readTimeoutMs = 12_000
-        ) ?: return null
+        val body = authenticatedGet(url, mediaUserToken) ?: return null
 
         val response = runCatching {
             ProviderSupport.json.decodeFromString<AppleMusicLyricsResponse>(body)
@@ -202,9 +175,36 @@ class AppleMusicProvider(
     private suspend fun resolveDeveloperToken(forceRefreshToken: Boolean): String {
         val manualToken = config.developerToken.trim()
         if (manualToken.isNotBlank()) return manualToken
-        return try { developerTokenProvider.getToken(forceRefreshToken) }
-        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-        catch (_: Exception) { "" }
+        return developerTokenProvider.getToken(forceRefreshToken)
+    }
+
+    private suspend fun authenticatedGet(url: String, mediaUserToken: String? = null): String? {
+        try {
+            suspend fun request(refresh: Boolean): String = httpGet(url, buildMap {
+                put("Authorization", "Bearer ${resolveDeveloperToken(refresh)}")
+                put("Origin", "https://music.apple.com")
+                put("Referer", "https://music.apple.com/")
+                put("User-Agent", ProviderSupport.DEFAULT_USER_AGENT)
+                if (mediaUserToken != null) put("Cookie", "media-user-token=$mediaUserToken")
+            })
+            return try { request(false) }
+            catch (error: HttpStatusException) {
+                // A slow connection or missing lyrics cannot be fixed by downloading a new token.
+                if (error.statusCode !in listOf(401, 403) || config.developerToken.isNotBlank()) throw error
+                request(true)
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: HttpStatusException) {
+            if (error.statusCode == 404) return null
+            val message = when (error.statusCode) {
+                401, 403 -> "Apple Music 认证失败，请检查账号或令牌配置"
+                429 -> "Apple Music 请求过于频繁，请稍后重试"
+                else -> "Apple Music 服务暂不可用（HTTP ${error.statusCode}），请重试"
+            }
+            throw CatalogAccessException(message)
+        } catch (_: IOException) {
+            throw CatalogAccessException("Apple Music 网络连接失败，请稍后重试")
+        }
     }
 
     private fun buildLyricsTypePriority(hasTimeSyncedLyrics: Boolean): List<String> {

@@ -7,6 +7,30 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.*
 import kotlin.test.*
 class HttpCancellationTest {
+    @Test fun checkedRequestsNegotiateGzipAndExposeStatusCodes() = runBlocking<Unit> {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        var acceptsGzip = false
+        server.createContext("/gzip") { e ->
+            acceptsGzip = e.requestHeaders.getFirst("Accept-Encoding").orEmpty().contains("gzip")
+            val data = java.io.ByteArrayOutputStream().also { output ->
+                java.util.zip.GZIPOutputStream(output).use { it.write("compressed fixture".toByteArray()) }
+            }.toByteArray()
+            e.responseHeaders.add("Content-Encoding", "gzip")
+            e.sendResponseHeaders(200, data.size.toLong())
+            e.responseBody.use { it.write(data) }
+        }
+        server.createContext("/unauthorized") { e -> e.sendResponseHeaders(401, -1); e.close() }
+        server.start()
+        try {
+            val base = "http://127.0.0.1:${server.address.port}"
+            assertEquals("compressed fixture", ProviderSupport.httpGetOrThrow("$base/gzip"))
+            assertTrue(acceptsGzip)
+            val error = assertFailsWith<io.github.proify.extensions.net.HttpStatusException> {
+                ProviderSupport.httpGetOrThrow("$base/unauthorized")
+            }
+            assertEquals(401, error.statusCode)
+        } finally { server.stop(0) }
+    }
     @Test fun normalResponseAndCancelledStalledBodyReleaseTheCall() = runBlocking<Unit> {
         val started = CompletableDeferred<Unit>(); val release = CountDownLatch(1)
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)

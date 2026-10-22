@@ -69,19 +69,29 @@ internal object ProviderSupport {
                         connectTimeoutMs: Int = 6_000, readTimeoutMs: Int = 8_000,
                         body: RequestBody? = null, requireSuccess: Boolean = false): String? {
         return try {
-            val client = httpClient.newBuilder()
-                .connectTimeout(connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
-                .readTimeout(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
-                .build()
-            val requestBuilder = Request.Builder()
-                .url(URI.create(url).toURL())
-                .get()
-            if (body != null) requestBuilder.post(body)
-            headers.forEach { (key, value) -> requestBuilder.header(key, value) }
-            client.newCall(requestBuilder.build()).awaitText(requireSuccess)
+            executeRequest(url, headers, connectTimeoutMs, readTimeoutMs, body, requireSuccess)
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) {
             null
         }
+    }
+
+    /** Keeps HTTP status and transport failures distinguishable for authentication retries. */
+    suspend fun httpGetOrThrow(url: String, headers: Map<String, String> = emptyMap(),
+        connectTimeoutMs: Int = 8_000, readTimeoutMs: Int = 10_000): String =
+        executeRequest(url, headers, connectTimeoutMs, readTimeoutMs, null, true)
+
+    private suspend fun executeRequest(url: String, headers: Map<String, String>,
+        connectTimeoutMs: Int, readTimeoutMs: Int, body: RequestBody?, requireSuccess: Boolean): String {
+        val client = httpClient.newBuilder()
+            .connectTimeout(connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .build()
+        val requestBuilder = Request.Builder()
+            .url(URI.create(url).toURL())
+            .get()
+        if (body != null) requestBuilder.post(body)
+        headers.forEach { (key, value) -> requestBuilder.header(key, value) }
+        return client.newCall(requestBuilder.build()).awaitText(requireSuccess)
     }
 }

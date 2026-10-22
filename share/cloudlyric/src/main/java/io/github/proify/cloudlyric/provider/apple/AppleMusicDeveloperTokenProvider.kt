@@ -10,7 +10,12 @@ import io.github.proify.cloudlyric.provider.internal.ProviderSupport
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-class AppleMusicDeveloperTokenProvider {
+class AppleMusicDeveloperTokenProvider(
+    private val loadText: suspend (String) -> String? = { url ->
+        // Let OkHttp negotiate gzip: the homepage and script are multi-megabyte uncompressed.
+        ProviderSupport.httpGetOrThrow(url, mapOf("User-Agent" to ProviderSupport.DEFAULT_USER_AGENT))
+    }
+) {
     @Volatile
     private var cachedToken: String? = null
     private val tokenMutex = Mutex()
@@ -32,29 +37,13 @@ class AppleMusicDeveloperTokenProvider {
     }
 
     private suspend fun fetchToken(): String {
-        val pageHtml = ProviderSupport.httpGet(
-            url = "https://music.apple.com",
-            headers = mapOf(
-                "User-Agent" to ProviderSupport.DEFAULT_USER_AGENT,
-                "Accept-Encoding" to "identity"
-            ),
-            connectTimeoutMs = 8_000,
-            readTimeoutMs = 10_000
-        ).orEmpty()
+        val pageHtml = loadText("https://music.apple.com").orEmpty()
         check(pageHtml.isNotBlank()) { "Failed to load Apple Music home page" }
 
         val assetPath = INDEX_JS_REGEX.find(pageHtml)?.value
             ?: error("Apple Music index script not found")
 
-        val scriptBody = ProviderSupport.httpGet(
-            url = "https://music.apple.com$assetPath",
-            headers = mapOf(
-                "User-Agent" to ProviderSupport.DEFAULT_USER_AGENT,
-                "Accept-Encoding" to "identity"
-            ),
-            connectTimeoutMs = 8_000,
-            readTimeoutMs = 10_000
-        ).orEmpty()
+        val scriptBody = loadText("https://music.apple.com$assetPath").orEmpty()
         check(scriptBody.isNotBlank()) { "Failed to load Apple Music script" }
 
         return extractToken(scriptBody)
@@ -63,8 +52,10 @@ class AppleMusicDeveloperTokenProvider {
 
     internal fun extractToken(script: String): String? = TOKEN_REGEX.find(script)?.value
 
-    private companion object {
-        private val INDEX_JS_REGEX = Regex("""/assets/index[^"]+\.js""")
+    companion object {
+        // Search sessions and hooked-player searches share one token within their process.
+        internal val shared by lazy { AppleMusicDeveloperTokenProvider() }
+        private val INDEX_JS_REGEX = Regex("""/assets/index[^"\s]+\.js""")
         private val TOKEN_REGEX = Regex("""eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+""")
     }
 }

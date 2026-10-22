@@ -8,6 +8,8 @@ import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+class HttpStatusException(val statusCode: Int) : IOException("HTTP $statusCode")
+
 /** Cancellation closes the socket even while a response body is being read. */
 suspend fun Call.awaitText(requireSuccess: Boolean = false): String = suspendCancellableCoroutine { continuation ->
     continuation.invokeOnCancellation { cancel() }
@@ -18,7 +20,7 @@ suspend fun Call.awaitText(requireSuccess: Boolean = false): String = suspendCan
         override fun onResponse(call: Call, response: Response) {
             try {
                 val text = response.use {
-                    if (requireSuccess && !it.isSuccessful) throw IOException("HTTP ${it.code}")
+                    if (requireSuccess && !it.isSuccessful) throw HttpStatusException(it.code)
                     it.body.string()
                 }
                 if (continuation.isActive) continuation.resume(text)
