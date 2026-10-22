@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  ~ Copyright 2026 Proify, Tomakino
+  ~ Licensed under the Apache License, Version 2.0
+  ~ http://www.apache.org/licenses/LICENSE-2.0
+  -->
+
+<resources>
+
+    <style name="Theme.LyricProvider" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/provider_primary</item>
+        <item name="colorSecondary">@color/provider_primary</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">@color/provider_background</item>
+    </style>
+</resources>

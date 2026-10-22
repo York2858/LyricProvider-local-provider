@@ -1,0 +1,10 @@
+<resources>
+    <color name="provider_primary">#6E57AD</color>
+    <color name="provider_background">#F7F7FC</color>
+    <color name="provider_surface">#FFFFFF</color>
+    <color name="provider_text">#242333</color>
+    <color name="provider_muted">#737184</color>
+    <color name="provider_tint">#EDE7FA</color>
+    <color name="provider_line">#ECEAF2</color>
+    <color name="provider_success">#397753</color>
+</resources>

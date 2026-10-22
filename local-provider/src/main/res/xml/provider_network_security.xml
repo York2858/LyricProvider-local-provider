@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <!-- These two public Kugou endpoints still use HTTP, as in Lyrico. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">complexsearch.kugou.com</domain>
+        <domain includeSubdomains="false">lyrics.kugou.com</domain>
+    </domain-config>
+</network-security-config>
