@@ -2,6 +2,7 @@ package io.github.proify.lyricon.localprovider.local
 
 import io.github.proify.lrckit.EnhanceLrcParser
 import io.github.proify.lyricon.localprovider.data.FileIndex
+import io.github.proify.lyricon.localprovider.data.LocalScan
 import io.github.proify.lyricon.localprovider.data.RuntimeBridge
 import io.github.proify.lyricon.localprovider.model.LyricsProvider
 import io.github.proify.lyricon.localprovider.model.LyricsResult
@@ -58,7 +59,7 @@ class ExternalLrcProvider : LyricsProvider {
                 val seen = mutableSetOf<String>()
                 val values = mutableListOf<Pair<File, LyricsResult>>()
                 RuntimeBridge.settings.folders.filter { it.uri.startsWith("/") }.forEach { folder ->
-                    File(folder.uri).takeIf { it.isDirectory }?.walkTopDown()?.maxDepth(3)?.take(5000)?.forEach { file ->
+                    File(folder.uri).takeIf { it.isDirectory }?.let(LocalScan::files)?.forEach { file ->
                         if (file.isFile && file.extension.equals("lrc", true) && seen.add(file.absolutePath)) read(file)?.let { values += file to it }
                     }
                 }

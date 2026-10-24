@@ -14,7 +14,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.Space
 import android.widget.TextView
-import io.github.proify.lyricon.localprovider.R
 import io.github.proify.lyricon.lyric.model.Song
 
 /** Lyrico-style row shared by search results, expanded versions and the playing song. */
@@ -22,19 +21,21 @@ class SongResultCard(
     context: Context, song: Song, album: String, source: String,
     score: Int? = null, moreVersions: Int = 0, expanded: Boolean = false, artwork: String = "",
     onPreview: () -> Unit, onScore: (() -> Unit)? = null, onToggleVersions: (() -> Unit)? = null,
-    lyricStatus: String = ""
+    lyricStatus: String = "", heroHeader: Boolean = false
 ) : LinearLayout(context) {
-    private val ink = context.getColor(R.color.provider_text)
-    private val muted = context.getColor(R.color.provider_muted)
-    private val accent = context.getColor(R.color.provider_primary)
-    private val tint = context.getColor(R.color.provider_tint)
+    private val palette = ProviderTheme.colors(context)
+    private val ink = palette.text
+    private val muted = palette.muted
+    private val accent = palette.primary
+    private val tint = palette.tint
 
     init {
         orientation = HORIZONTAL; gravity = Gravity.TOP
-        setPadding(dp(12), dp(12), dp(12), dp(12))
-        background = GradientDrawable().apply {
-            setColor(context.getColor(R.color.provider_surface)); cornerRadius = dp(22).toFloat()
-            setStroke(dp(1).coerceAtLeast(1), context.getColor(R.color.provider_line))
+        if (!heroHeader) {
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            background = GradientDrawable().apply {
+                setColor(palette.surface); cornerRadius = dp(20).toFloat()
+            }
         }
         isClickable = true; isFocusable = true; setOnClickListener { onPreview() }
         contentDescription = listOfNotNull(song.name, song.artist, album.takeIf { it.isNotBlank() }, source).joinToString("，")
@@ -44,16 +45,14 @@ class SongResultCard(
             importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
             clipToOutline = true
             io.github.proify.lyricon.localprovider.artwork.ArtworkLoader.bind(this, artwork)
-        }, LayoutParams(dp(56), dp(56)).apply { marginEnd = dp(10) })
+        }, LayoutParams(dp(if (heroHeader) 62 else 56), dp(if (heroHeader) 62 else 56)).apply { marginEnd = dp(12) })
         val info = LinearLayout(context).apply { orientation = VERTICAL; tag = "songInfo" }
         addView(info, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         val header = LinearLayout(context).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        header.addView(label(song.name.orEmpty(), 16, ink).apply {
+        header.addView(label(song.name.orEmpty(), if (heroHeader) 20 else 16, ink).apply {
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); tag = "songTitle"
-            enableMarquee()
+            if (heroHeader) { maxLines = 2; ellipsize = TextUtils.TruncateAt.END } else enableMarquee()
         }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        if (source.isNotBlank()) header.addView(badge(source).apply { maxWidth = dp(80); tag = "songSource" },
-            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6) })
         info.addView(header)
         val artistAlbum = listOf(song.artist.orEmpty(), album).filter { it.isNotBlank() }.joinToString(" ・ ")
         if (artistAlbum.isNotBlank()) info.addView(label(artistAlbum, 13, muted).apply { tag = "songArtistAlbum"; enableMarquee() },
@@ -74,7 +73,9 @@ class SongResultCard(
         if (features.isNotBlank() || lyricStatus.isNotBlank()) details.addView(label(features.ifBlank { lyricStatus }, 11,
             if (features.isNotBlank()) accent else muted).apply { tag = "songFeatures" },
             LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        if (details.childCount > 0) info.addView(details, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        if (!heroHeader && details.childCount > 0) info.addView(details, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(7) })
+        if (source.isNotBlank() && !heroHeader) info.addView(badge(source).apply { maxWidth = dp(160); tag = "songSource" },
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
         val footer = LinearLayout(context).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(36) }
         if (moreVersions > 0 && onToggleVersions != null) {
             footer.minimumHeight = dp(44)

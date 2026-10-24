@@ -12,7 +12,7 @@ import java.util.Locale
 
 data class LyricFile(
     val uri: String, val filename: String, val directory: String, val modified: Long,
-    val song: Song
+    val song: Song, val embedded: Boolean = false, val album: String = ""
 ) {
     val wordLevel: Boolean get() = LyricTiming.hasWordTiming(song.lyrics.orEmpty())
     val romanization: Boolean get() = song.lyrics.orEmpty().any { !it.roma.isNullOrBlank() }
@@ -29,6 +29,11 @@ object Catalog {
     private val parsed = FileIndex<LyricFile>()
     private var parserRules: Pair<List<String>, List<String>>? = null
     private val seen = mutableSetOf<String>()
+    private fun audio(context: Context, uri: Uri, name: String, directory: String, modified: Long, size: Long): LyricFile? {
+        seen += uri.toString()
+        return parsed.read(uri.toString(), modified, size) { EmbeddedCatalog.read(context, uri, name, directory, modified) }
+            ?.copy(filename = name, directory = directory)
+    }
     private fun indexed(uri: String, name: String, directory: String, modified: Long, size: Long,
                         read: () -> String?): LyricFile? {
         seen += uri
@@ -54,10 +59,12 @@ object Catalog {
                     val tree = Uri.parse(folder.uri)
                     walkTree(context, tree, DocumentsContract.getTreeDocumentId(tree), folder.name, 0, entries)
                 } else {
-                    File(folder.uri).takeIf { it.isDirectory && it.canRead() }?.walkTopDown()?.maxDepth(3)
-                        ?.take(5000)?.filter { it.isFile && supported(it.name) }
+                    File(folder.uri).takeIf { it.isDirectory && it.canRead() }?.let(LocalScan::files)
+                        ?.filter { supported(it.name) || LocalScan.isAudio(it.name) }
                         ?.forEach { file ->
-                            if (file.length() <= 2_000_000) indexed(file.toURI().toString(), file.name,
+                            if (LocalScan.isAudio(file.name)) audio(context, Uri.fromFile(file), file.name,
+                                file.parentFile?.name.orEmpty(), file.lastModified(), file.length())?.let { entries[it.uri] = it }
+                            else if (file.length() <= 2_000_000) indexed(file.toURI().toString(), file.name,
                                 file.parentFile?.name.orEmpty(), file.lastModified(), file.length()) { file.readText() }
                                 ?.let { entries[it.uri] = it }
                         }
@@ -87,18 +94,23 @@ object Catalog {
         cachedAt = android.os.SystemClock.elapsedRealtime()
         return cached!!
     }
+    private class ScanBudget(var visited: Int = 0)
     private fun walkTree(context: Context, tree: Uri, docId: String, directory: String, depth: Int,
-                         result: MutableMap<String, LyricFile>) {
-        if (depth > 3 || result.size >= 5000) return
+                         result: MutableMap<String, LyricFile>, budget: ScanBudget = ScanBudget()) {
+        if (depth > LocalScan.MAX_DIRECTORY_DEPTH || budget.visited >= LocalScan.MAX_ENTRIES) return
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
         val columns = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_LAST_MODIFIED, DocumentsContract.Document.COLUMN_SIZE)
         context.contentResolver.query(children, columns, null, null, null)?.use { cursor ->
-            while (cursor.moveToNext() && result.size < 5000) {
+            while (budget.visited < LocalScan.MAX_ENTRIES && cursor.moveToNext()) {
+                budget.visited++
                 val id = cursor.getString(0); val name = cursor.getString(1).orEmpty()
                 if (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) {
-                    walkTree(context, tree, id, "$directory/$name", depth + 1, result)
+                    walkTree(context, tree, id, "$directory/$name", depth + 1, result, budget)
+                } else if (LocalScan.isAudio(name)) {
+                    val uri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                    audio(context, uri, name, directory, cursor.getLong(3), cursor.getLong(4))?.let { result[it.uri] = it }
                 } else if (supported(name) && cursor.getLong(4) <= 2_000_000) {
                     val uri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
                     runCatching {
@@ -143,7 +155,8 @@ object Catalog {
             comparable(it.song.name) == comparable(title) &&
                 (artist.isNullOrBlank() || it.song.artist.isNullOrBlank() || comparable(it.song.artist) == comparable(artist))
         }
-        return candidates.singleOrNull()?.let { applyChoice(it, choice ?: SongChoice()) }
+        val preferred = candidates.filterNot { it.embedded }.ifEmpty { candidates }
+        return preferred.singleOrNull()?.let { applyChoice(it, choice ?: SongChoice()) }
     }
     private fun sameDirectory(uri: String, audioPath: String?): Boolean {
         if (audioPath == null) return false

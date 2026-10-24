@@ -1,10 +1,16 @@
 <resources>
-    <style name="Theme.LyricProvider" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">@color/provider_primary</item>
-        <item name="colorSecondary">@color/provider_primary</item>
+    <style name="Theme.LyricProvider" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Pre-Android 11 fallback; the runtime Monet overlay replaces these attributes. -->
+        <item name="colorPrimary">#66AFFF</item>
+        <item name="colorSecondary">#66AFFF</item>
+        <item name="colorOnPrimary">#09131B</item>
+        <item name="colorSurface">#18232F</item>
+        <item name="colorOnSurface">#F2F6FA</item>
+        <item name="colorSurfaceContainerHigh">#1C2936</item>
+        <item name="android:colorBackground">#111B25</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
-        <item name="android:windowBackground">@color/provider_background</item>
+        <item name="android:windowBackground">#111B25</item>
     </style>
 </resources>

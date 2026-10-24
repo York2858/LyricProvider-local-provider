@@ -52,6 +52,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private lateinit var content: LinearLayout
     private lateinit var heading: TextView
+    private lateinit var subtitle: TextView
     private lateinit var back: ImageButton
     private lateinit var nav: LinearLayout
     private lateinit var scroll: ScrollView
@@ -76,6 +77,7 @@ class MainActivity : AppCompatActivity() {
     private var searchRange = "全部"
     private var searchFilter = "全部"
     private var searchSource = "全部来源"
+    private var searchFiltersExpanded = false
     private var onlineResults = emptyList<SearchCandidate>()
     private val searchErrors = linkedMapOf<String, String>()
     private var searchedProviders = 0
@@ -156,37 +158,45 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    private val ink get() = getColor(R.color.provider_text)
-    private val muted get() = getColor(R.color.provider_muted)
-    private val purple get() = getColor(R.color.provider_primary)
-    private val surface get() = getColor(R.color.provider_surface)
-    private val tint get() = getColor(R.color.provider_tint)
-    private val bg get() = getColor(R.color.provider_background)
-    private val green get() = getColor(R.color.provider_success)
-    private val titles = mapOf("home" to "本地歌词支持", "library" to "歌词库", "settings" to "设置",
+    private val palette get() = ProviderTheme.colors(this)
+    private val ink get() = palette.text
+    private val muted get() = palette.muted
+    private val purple get() = palette.primary
+    private val surface get() = palette.surface
+    private val tint get() = palette.tint
+    private val bg get() = palette.background
+    private val green get() = palette.primary
+    private var themeSignature = ""
+    private val titles = mapOf("home" to "当前歌曲", "library" to "歌词库", "settings" to "设置",
         "folders" to "歌词目录", "detail" to "歌词预览", "diagnosis" to "匹配详情",
         "players" to "播放器管理", "cloud" to "云端歌词源", "logs" to "运行记录", "rules" to "歌词过滤",
         "search" to "搜索歌词", "matching" to "匹配评分规则")
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        delegate.localNightMode = ProviderTheme.nightMode(this)
         super.onCreate(savedInstanceState)
+        ProviderTheme.install(this)
+        themeSignature = ProviderTheme.signature(this)
         tab = savedInstanceState?.getString("tab") ?: "home"
-        page = tab
+        page = savedInstanceState?.getString("page") ?: tab
+        savedInstanceState?.getStringArrayList("history")?.let { history.addAll(it) }
         root = column().apply { setBackgroundColor(bg) }
         WindowCompat.setDecorFitsSystemWindows(window, false)
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom); insets
         }
-        val header = row().apply { setPadding(dp(10), dp(7), dp(12), dp(5)) }
+        val header = row().apply { setPadding(dp(20), dp(20), dp(20), dp(18)) }
         back = iconButton("back", "返回") { goBack() }
         header.addView(back)
-        heading = text("本地歌词支持", 23).apply { setPadding(dp(10), 0, 0, 0) }
-        header.addView(heading, LinearLayout.LayoutParams(0, dp(57), 1f))
-        header.addView(iconButton("settings", "设置") { open("settings") })
+        heading = text("当前歌曲", 26).apply { typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }
+        subtitle = text("本地歌词支持", 12, muted)
+        header.addView(column().apply {
+            addView(heading); addView(subtitle, full(4))
+        }, LinearLayout.LayoutParams(0, -2, 1f))
         root.addView(header)
         scroll = ScrollView(this).apply { isFillViewport = false; clipToPadding = false }
-        content = column().apply { setPadding(dp(16), dp(5), dp(16), dp(24)) }
+        content = column().apply { setPadding(dp(20), 0, dp(20), dp(24)) }
         scroll.setOnTouchListener { _, event ->
             if (page == "detail" && event.actionMasked == android.view.MotionEvent.ACTION_MOVE && followPlayback) {
                 followPlayback = false; updateFollowButton()
@@ -195,9 +205,14 @@ class MainActivity : AppCompatActivity() {
         }
         scroll.addView(content)
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        nav = row().apply { setPadding(dp(10), dp(7), dp(10), dp(7)); setBackgroundColor(surface) }
+        nav = row().apply { setPadding(dp(12), dp(10), dp(12), dp(8)); setBackgroundColor(surface) }
         root.addView(nav)
         setContentView(root)
+        WindowCompat.getInsetsController(window, root).apply {
+            val light = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK !=
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+            isAppearanceLightStatusBars = light; isAppearanceLightNavigationBars = light
+        }
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() { if (page == tab && tab == "home") finish() else goBack() }
         })
@@ -209,7 +224,15 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() { super.onStart(); foreground = true; previewRuntime = store.snapshot(); syncSearchWork(); if (page == "search" || page == "detail") render(); restartPreviewTick(); contentResolver.registerContentObserver(ProviderStore.URI, true, observer); if (page == "diagnosis") receiver.start() }
     override fun onStop() { foreground = false; syncPreviewDemand(); syncSearchWork(); main.removeCallbacks(previewTick); receiver.stop(); contentResolver.unregisterContentObserver(observer); super.onStop() }
     override fun onDestroy() { onlineSession.close(); searchScope.cancel(); io.shutdownNow(); main.removeCallbacksAndMessages(null); super.onDestroy() }
-    override fun onSaveInstanceState(outState: Bundle) { outState.putString("tab", tab); super.onSaveInstanceState(outState) }
+    override fun onResume() {
+        super.onResume()
+        if (themeSignature.isNotBlank() && themeSignature != ProviderTheme.signature(this)) recreate()
+    }
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("tab", tab); outState.putString("page", page)
+        outState.putStringArrayList("history", ArrayList(history))
+        super.onSaveInstanceState(outState)
+    }
     private fun open(next: String) { history.addLast(page); page = next; render(); scroll.scrollTo(0, 0) }
     private fun goBack() {
         page = if (history.isNotEmpty()) history.removeLast() else if (page != tab) tab else "home"
@@ -223,6 +246,7 @@ class MainActivity : AppCompatActivity() {
             previewLoadVersion++; previewLoadJob?.cancel(); previewLoading = false
         }
         heading.text = titles[page] ?: "本地歌词支持"
+        subtitle.visibility = if (page == "home") View.VISIBLE else View.GONE
         back.visibility = if (page in setOf("home", "search", "library", "settings")) View.GONE else View.VISIBLE
         if (page != "diagnosis") receiver.stop()
         main.removeCallbacks(previewTick)
@@ -248,13 +272,19 @@ class MainActivity : AppCompatActivity() {
             val selected = page == id
             val b = Button(this).apply {
                 text = title; textSize = 11f; isAllCaps = false; setTextColor(if (selected) purple else muted)
-                background = shape(if (selected) tint else surface, 15); minimumHeight = dp(58); minHeight = dp(58)
+                background = null; minimumHeight = dp(58); minHeight = dp(58); minWidth = 0; minimumWidth = 0
                 compoundDrawablePadding = dp(3)
-                setCompoundDrawables(null, ProviderIcon(icon, if (selected) purple else muted).apply { setBounds(0, 0, dp(21), dp(21)) }, null, null)
+                val indicator = android.graphics.drawable.LayerDrawable(arrayOf(
+                    shape(if (selected) tint else surface, 20), ProviderIcon(icon, if (selected) purple else muted)
+                )).apply {
+                    setLayerInset(1, dp(18), dp(4), dp(18), dp(4))
+                    setBounds(0, 0, dp(56), dp(28))
+                }
+                setCompoundDrawables(null, indicator, null, null)
                 setPadding(0, dp(6), 0, dp(4)); contentDescription = title; isSelected = selected
                 setOnClickListener { if (id == "search") prepareSearch(); tab = id; page = id; choosing = false; history.clear(); render(); scroll.scrollTo(0, 0) }
             }
-            nav.addView(b, LinearLayout.LayoutParams(0, dp(60), 1f).apply { setMargins(dp(5), 0, dp(5), 0) })
+            nav.addView(b, LinearLayout.LayoutParams(0, dp(60), 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
         }
     }
     private fun home() {
@@ -268,26 +298,32 @@ class MainActivity : AppCompatActivity() {
             content.addView(action("搜索歌词", true, "search") { enterSearch() }, full(12))
             return
         }
-        content.addView(SongResultCard(this, song!!, current.album,
-            sourceLabel(current.source), artwork = playingArtwork(current), onPreview = { openCurrent() }), full(0, 10))
-        divider(content)
-        content.addView(row().apply {
-            addView(text(current.message, 12, muted), LinearLayout.LayoutParams(0, -2, 1f))
-            addView(action("匹配详情", false) { open("diagnosis") })
-        }, full(3))
-        content.addView(row().apply {
-            addView(action("搜索 / 换歌词", true, "search") { enterSearch() }, LinearLayout.LayoutParams(0, dp(52), 1.3f).apply { rightMargin = dp(12) })
-            addView(action("查看歌词", false) { openCurrent() }, LinearLayout.LayoutParams(0, dp(52), 1f))
-        }, full(9, 6))
-        section("当前歌词")
-        val line = song!!.lyrics.orEmpty().firstOrNull { !it.roma.isNullOrBlank() && !it.translation.isNullOrBlank() }
+        val line = song.lyrics.orEmpty().firstOrNull { !it.roma.isNullOrBlank() && !it.translation.isNullOrBlank() }
             ?: song.lyrics.orEmpty().firstOrNull { !it.translation.isNullOrBlank() || !it.roma.isNullOrBlank() }
             ?: song.lyrics.orEmpty().firstOrNull()
         content.addView(column().apply {
-            background = shape(surface, 18); setPadding(dp(16), dp(24), dp(16), dp(24))
-            addView(text(line?.text ?: current.message, 18).apply { gravity = Gravity.CENTER })
-            line?.roma?.takeIf { it.isNotBlank() }?.let { addView(text(it, 13, purple).apply { gravity = Gravity.CENTER }, full(9)) }
-            line?.translation?.takeIf { it.isNotBlank() }?.let { addView(text(it, 14, muted).apply { gravity = Gravity.CENTER }, full(7)) }
+            tag = "currentSongHero"; background = shape(surface, 24); setPadding(dp(20), dp(20), dp(20), dp(20))
+            addView(SongResultCard(this@MainActivity, song, current.album, "", artwork = playingArtwork(current),
+                onPreview = { openCurrent() }, heroHeader = true), full())
+            addView(text(line?.text ?: current.message, 23, if (line == null) muted else purple).apply {
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setLineSpacing(dp(5).toFloat(), 1f)
+            }, full(34))
+            line?.roma?.takeIf { it.isNotBlank() }?.let { addView(text(it, 13, muted), full(10)) }
+            line?.translation?.takeIf { it.isNotBlank() }?.let { addView(text(it, 14, muted), full(8)) }
+            addView(buttonFlow().apply {
+                if (!song.lyrics.isNullOrEmpty()) addView(badges(song))
+                if (current.source.isNotBlank()) addView(text(sourceLabel(current.source), 11, muted).apply {
+                    maxLines = 2; setPadding(0, dp(4), 0, dp(4))
+                })
+            }, full(26))
+        }, full(0, 16))
+        content.addView(row().apply {
+            addView(action("搜索 / 换歌词", true, "search") { enterSearch() }, LinearLayout.LayoutParams(0, dp(52), 1f).apply { rightMargin = dp(10) })
+            addView(action("查看歌词", false) { openCurrent() }, LinearLayout.LayoutParams(-2, dp(52)))
+        }, full(0, 8))
+        content.addView(item(current.message.ifBlank { "查看匹配状态" }, "", "匹配详情") { open("diagnosis") }.apply {
+            minimumHeight = dp(44); setPadding(0, dp(6), 0, dp(6))
         }, full())
         section("最近使用", "全部") { tab = "library"; page = "library"; render() }
         val saved = SavedLyrics(this).list().take(2)
@@ -406,13 +442,12 @@ class MainActivity : AppCompatActivity() {
     private fun searchPage() {
         val snapshot = store.snapshot()
         snapshot.song?.takeIf { !it.name.isNullOrBlank() }?.let { current ->
-            content.addView(text("当前播放", 12, muted), full(0, 8))
-            content.addView(SongResultCard(this, current, snapshot.album, sourceLabel(snapshot.source),
-                artwork = playingArtwork(snapshot), onPreview = { openCurrent() }).apply { tag = "playing:${trackKey(current.name, current.artist)}" }, full(0, 16))
+            content.addView(text("为「${current.name} · ${current.artist.orEmpty()}」选择歌词", 12, muted), full(0, 14))
         }
         val input = EditText(this).apply {
             hint = "搜索歌名 / 艺术家"; setSingleLine(); setText(onlineQuery); textSize = 15f
-            setPadding(dp(12), dp(7), dp(12), dp(7)); background = shape(surface, 13)
+            setPadding(dp(14), dp(10), dp(14), dp(10)); background = shape(surface, 18)
+            setTextColor(ink); setHintTextColor(muted)
             contentDescription = "搜索在线或本地歌词"; imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -425,18 +460,20 @@ class MainActivity : AppCompatActivity() {
             addView(input, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(10) })
             addView(action("搜索", true) { runSearch(false) })
         })
-        content.addView(buttonFlow().apply {
-            addView(action("修改搜索信息", false) { editSearchReference() })
-            addView(action("评分规则", false, "settings") { open("matching") })
-        }, full(10))
-        content.addView(buttonFlow().apply {
+        content.addView(row().apply {
+            addView(row().apply {
             listOf("全部", "在线", "本地").forEach { label -> addView(chip(label, searchRange == label) {
                 searchRange = label; renderSearchResults()
                 // Refresh the selected appearance without losing the entered query.
                 render()
             }) }
-        }, full(8))
-        content.addView(buttonFlow().apply {
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(textAction(if (searchFiltersExpanded) "收起筛选" else "筛选", "settings") {
+                searchFiltersExpanded = !searchFiltersExpanded; render()
+            })
+        }, full(8, 4))
+        if (searchFiltersExpanded) {
+            content.addView(buttonFlow().apply {
             listOf("全部", "逐字", "罗马音").forEach { label -> addView(chip(label, searchFilter == label) {
                 searchFilter = label; render()
             }) }
@@ -449,7 +486,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             button.text = sourceLabel(searchSource); addView(button)
-        }, full(8))
+            }, full(4))
+            content.addView(buttonFlow().apply {
+                addView(textAction("修改搜索信息") { editSearchReference() })
+                addView(textAction("评分规则", "settings") { open("matching") })
+            }, full(2, 8))
+        } else if (searchFilter != "全部" || searchSource != "全部来源") {
+            content.addView(text("${searchFilter} · ${sourceLabel(searchSource)}", 12, purple), full(0, 8))
+        }
         content.addView(column().apply { tag = "searchResults" }, full())
         renderSearchResults()
     }
@@ -733,6 +777,30 @@ class MainActivity : AppCompatActivity() {
 
     private fun settings() {
         val s = store.settings()
+        section("外观")
+        card {
+            val mode = ProviderTheme.mode(this@MainActivity)
+            addView(item("主题模式", end = when (mode) { "light" -> "浅色"; "dark" -> "深色"; else -> "跟随系统" }) {
+                val modes = listOf("auto", "light", "dark")
+                MaterialAlertDialogBuilder(this@MainActivity).setTitle("主题模式")
+                    .setSingleChoiceItems(arrayOf("跟随系统", "浅色", "深色"), modes.indexOf(mode)) { dialog, which ->
+                        ProviderTheme.setMode(this@MainActivity, modes[which]); dialog.dismiss(); recreate()
+                    }.setNegativeButton("取消", null).show()
+            })
+            addView(toggle("莫奈取色", "按 Lyrico 的规则生成整套配色", ProviderTheme.monet(this@MainActivity)) {
+                ProviderTheme.setMonet(this@MainActivity, it); recreate()
+            })
+            if (ProviderTheme.monet(this@MainActivity)) {
+                val seeds = ProviderTheme.seeds.entries.toList()
+                val selectedSeed = seeds.indexOfFirst { it.value == ProviderTheme.seed(this@MainActivity) }.coerceAtLeast(0)
+                addView(item("关键色", end = seeds[selectedSeed].key) {
+                    MaterialAlertDialogBuilder(this@MainActivity).setTitle("关键色")
+                        .setSingleChoiceItems(seeds.map { it.key }.toTypedArray(), selectedSeed) { dialog, which ->
+                            ProviderTheme.setSeed(this@MainActivity, seeds[which].value); dialog.dismiss(); recreate()
+                        }.setNegativeButton("取消", null).show()
+                })
+            }
+        }
         section("接入")
         card {
             addView(item("播放器管理", "按实际作用域接入") { open("players") })
@@ -755,7 +823,7 @@ class MainActivity : AppCompatActivity() {
         content.addView(text("本地歌词支持 ${BuildConfig.VERSION_NAME}", 12, muted).apply { gravity = Gravity.CENTER; setPadding(0, dp(20), 0, 0) })
     }
     private fun folders() {
-        content.addView(text("支持 LRC、TTML；目录搜索最多深入 3 层。", 12, muted), full(4, 15))
+        content.addView(text("支持 LRC、TTML 和音乐内嵌歌词；从所选目录向下搜索最多 ${LocalScan.MAX_DIRECTORY_DEPTH} 层子目录。", 12, muted), full(4, 15))
         store.settings().folders.forEach { folder -> card {
             val readable = if (folder.uri.startsWith("content:")) contentResolver.persistedUriPermissions.any { it.uri.toString() == folder.uri && it.isReadPermission }
                 else java.io.File(folder.uri).canRead()
@@ -868,7 +936,7 @@ class MainActivity : AppCompatActivity() {
                 val value = android.text.SpannableString(timeline.display[position.line].text)
                 timeline.display[position.line].words.getOrNull(position.word)?.let { word ->
                     value.setSpan(android.text.style.BackgroundColorSpan(purple), word.start, word.end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    value.setSpan(android.text.style.ForegroundColorSpan(surface), word.start, word.end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    value.setSpan(android.text.style.ForegroundColorSpan(palette.onPrimary), word.start, word.end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
                 text.text = value
             } }
@@ -1177,14 +1245,18 @@ class MainActivity : AppCompatActivity() {
     }
     private fun action(title: String, primary: Boolean, icon: String? = null, callback: () -> Unit): MaterialButton =
         MaterialButton(this).apply {
-            text = title; isAllCaps = false; textSize = 13f; cornerRadius = dp(14)
+            text = title; isAllCaps = false; textSize = 13f; cornerRadius = dp(16)
             insetTop = dp(2); insetBottom = dp(2); minHeight = dp(48); minimumHeight = dp(48)
             setPadding(dp(12), dp(4), dp(12), dp(4))
             backgroundTintList = ColorStateList.valueOf(if (primary) purple else surface)
-            setTextColor(if (primary) bg else purple)
-            if (icon != null) { this.icon = ProviderIcon(icon, if (primary) bg else purple); iconSize = dp(17); iconPadding = dp(6); iconTint = ColorStateList.valueOf(if (primary) bg else purple) }
+            setTextColor(if (primary) palette.onPrimary else purple)
+            if (icon != null) { this.icon = ProviderIcon(icon, if (primary) palette.onPrimary else purple); iconSize = dp(17); iconPadding = dp(6); iconTint = ColorStateList.valueOf(if (primary) palette.onPrimary else purple) }
             setOnClickListener { callback() }
         }
+    private fun textAction(title: String, icon: String? = null, callback: () -> Unit) = action(title, false, icon, callback).apply {
+        backgroundTintList = ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
+        setPadding(dp(8), dp(4), dp(8), dp(4)); minWidth = 0; minimumWidth = 0
+    }
     private fun chip(title: String, chosen: Boolean, callback: () -> Unit): MaterialButton = action(title, false, callback = callback).apply {
         backgroundTintList = ColorStateList.valueOf(if (chosen) tint else bg); cornerRadius = dp(10)
         setTextColor(if (chosen) purple else muted); isSelected = chosen
@@ -1204,7 +1276,12 @@ class MainActivity : AppCompatActivity() {
     private fun toggle(title: String, subtitle: String, checked: Boolean, callback: (Boolean) -> Unit): LinearLayout = row().apply {
         minimumHeight = dp(62); setPadding(0, dp(10), 0, dp(10))
         addView(column().apply { addView(text(title)); if (subtitle.isNotBlank()) addView(text(subtitle, 12, muted).apply { setPadding(0, dp(3), dp(7), 0) }) }, LinearLayout.LayoutParams(0, -2, 1f))
-        val control = SwitchMaterial(this@MainActivity).apply { isChecked = checked; contentDescription = title; setOnCheckedChangeListener { _, value -> callback(value) } }
+        val control = SwitchMaterial(this@MainActivity).apply {
+            isChecked = checked; contentDescription = title
+            thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(palette.onPrimary, surface))
+            trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(purple, palette.line))
+            setOnCheckedChangeListener { _, value -> callback(value) }
+        }
         addView(control); isClickable = true; setOnClickListener { control.isChecked = !control.isChecked }
     }
     private fun card(block: LinearLayout.() -> Unit) { cardIn(content).apply(block) }
@@ -1214,12 +1291,12 @@ class MainActivity : AppCompatActivity() {
     }
     private fun section(title: String, action: String? = null, callback: (() -> Unit)? = null) {
         content.addView(row().apply {
-            addView(text(title, 14, purple), LinearLayout.LayoutParams(0, dp(43), 1f))
-            if (action != null && callback != null) addView(action(action, false, callback = callback))
+            addView(text(title, 14, ink).apply { typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }, LinearLayout.LayoutParams(0, dp(43), 1f))
+            if (action != null && callback != null) addView(textAction(action, callback = callback))
         }, full(9))
     }
     private fun shape(color: Int, radius: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
-    private fun divider(parent: LinearLayout) { parent.addView(View(this).apply { setBackgroundColor(getColor(R.color.provider_line)) }, LinearLayout.LayoutParams(-1, dp(1))) }
+    private fun divider(parent: LinearLayout) { parent.addView(View(this).apply { setBackgroundColor(palette.line) }, LinearLayout.LayoutParams(-1, dp(1))) }
     private fun full(top: Int = 0, bottom: Int = 0) = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(top); bottomMargin = dp(bottom) }
     private fun space(parent: LinearLayout, height: Int) { parent.addView(Space(this), LinearLayout.LayoutParams(1, dp(height))) }
     private fun dp(value: Int) = (resources.displayMetrics.density * value).toInt()

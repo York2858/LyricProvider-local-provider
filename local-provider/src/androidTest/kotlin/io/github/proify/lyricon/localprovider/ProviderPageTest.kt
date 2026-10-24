@@ -33,7 +33,7 @@ class ProviderPageTest {
         val activity = launchTestActivity()
         try {
             onView(allOf(withText("设置"), isAssignableFrom(Button::class.java))).perform(activate())
-            onView(withText("逐字优先")).check(matches(isDisplayed()))
+            onView(withText("莫奈取色")).check(matches(isDisplayed()))
             onView(withContentDescription("歌词目录, ${ProviderStore(instrument.targetContext).settings().folders.size} 个目录 · ${ProviderStore(instrument.targetContext).settings().files.size} 份导入歌词")).perform(activate())
             onView(withText("添加歌词目录")).check(matches(isDisplayed()))
             onView(withContentDescription("返回")).perform(activate())
@@ -42,6 +42,7 @@ class ProviderPageTest {
             onView(allOf(withText("当前"), isAssignableFrom(Button::class.java))).perform(activate())
             onView(allOf(withText("搜索"), isAssignableFrom(Button::class.java))).perform(activate())
             onView(withContentDescription("搜索在线或本地歌词")).check(matches(isDisplayed()))
+            onView(withText("筛选")).perform(activate())
             onView(withText("评分规则")).perform(activate())
             onView(withText("字段权重")).check(matches(isDisplayed()))
         } finally { instrument.runOnMainSync { activity.finish() } }

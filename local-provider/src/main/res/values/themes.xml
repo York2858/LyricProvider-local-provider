@@ -6,9 +6,14 @@
 
 <resources>
 
-    <style name="Theme.LyricProvider" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <style name="Theme.LyricProvider" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/provider_primary</item>
         <item name="colorSecondary">@color/provider_primary</item>
+        <item name="colorOnPrimary">@color/provider_on_primary</item>
+        <item name="colorSurface">@color/provider_surface</item>
+        <item name="colorOnSurface">@color/provider_text</item>
+        <item name="colorSurfaceContainerHigh">@color/provider_popup</item>
+        <item name="android:colorBackground">@color/provider_background</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>

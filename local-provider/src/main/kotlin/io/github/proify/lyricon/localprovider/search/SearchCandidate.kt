@@ -40,8 +40,8 @@ data class SearchCandidate(val id: String, val source: String, val song: Song,
             return SearchCandidate(id, source, Song(name = result.trackName, artist = result.artistName,
                 duration = result.durationMs, lyrics = normalized), result.albumName.orEmpty(), artworkUrl = result.artworkUrl)
         }
-        fun local(file: LyricFile) = SearchCandidate(digest(file.uri), "本地", file.song,
-            localUri = file.uri)
+        fun local(file: LyricFile) = SearchCandidate(digest(file.uri), if (file.embedded) "Embedded" else "本地", file.song,
+            album = file.album, localUri = file.uri)
         fun digest(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
             .joinToString("") { "%02x".format(it) }
         fun distinct(items: List<SearchCandidate>) = items.groupBy { it.id }.values.map { versions ->

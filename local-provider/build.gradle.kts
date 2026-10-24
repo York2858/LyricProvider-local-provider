@@ -112,6 +112,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
+    implementation(libs.material.color.utilities)
     implementation(libs.taglib)      // 内嵌歌词需要
     compileOnly(libs.xposed.api)
     ksp(libs.yukihookapi.ksp.xposed)

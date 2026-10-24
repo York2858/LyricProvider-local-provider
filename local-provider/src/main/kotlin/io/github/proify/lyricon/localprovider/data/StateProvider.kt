@@ -56,7 +56,7 @@ class StateProvider : ContentProvider() {
                     file?.let {
                         val song = ProviderStore.json.encodeToString(it.song)
                         if (song.length <= 380_000) {
-                            putString("song", song); putString("source", "目录歌词 · ${it.filename}")
+                            putString("song", song); putString("source", "${if (it.embedded) "音乐内嵌歌词" else "目录歌词"} · ${it.filename}")
                             putBoolean("manual", store.choices()[trackKey(extras?.getString("title"), extras?.getString("artist"))]?.uri?.isNotBlank() == true)
                         }
                     }
