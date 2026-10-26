@@ -1,14 +1,14 @@
 <!-- Keep these roles unqualified: a night-qualified color takes precedence over
      Material's runtime color resource table, preventing Monet updates in dark mode. -->
 <resources>
-    <color name="provider_primary">#3390EC</color>
+    <color name="provider_primary">#1595FF</color>
     <color name="provider_on_primary">#FFFFFF</color>
-    <color name="provider_popup">#FFFFFF</color>
-    <color name="provider_background">#F4F6F8</color>
-    <color name="provider_surface">#FFFFFF</color>
-    <color name="provider_text">#1C2733</color>
-    <color name="provider_muted">#7B8894</color>
-    <color name="provider_tint">#E3EFFB</color>
-    <color name="provider_line">#D7DFE8</color>
-    <color name="provider_success">#397753</color>
+    <color name="provider_popup">#E6F5FE</color>
+    <color name="provider_background">#DDF1FE</color>
+    <color name="provider_surface">#E6F5FE</color>
+    <color name="provider_text">#112D50</color>
+    <color name="provider_muted">#50739B</color>
+    <color name="provider_tint">#BFE6FF</color>
+    <color name="provider_line">#F3FBFF</color>
+    <color name="provider_success">#1595FF</color>
 </resources>

@@ -27,3 +27,7 @@ keystore.properties
 # OS
 .DS_Store
 Thumbs.db
+
+# Local agent instructions and UI review artifacts
+/AGENTS.md
+/docs/ui-*/

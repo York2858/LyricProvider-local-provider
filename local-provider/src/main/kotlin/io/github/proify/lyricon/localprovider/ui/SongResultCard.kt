@@ -1,118 +1,126 @@
 package io.github.proify.lyricon.localprovider.ui
 
-import io.github.proify.lyricon.localprovider.lyrics.LyricTiming
 import android.content.Context
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.text.SpannableString
-import android.text.Spanned
+import android.graphics.drawable.InsetDrawable
 import android.text.TextUtils
-import android.text.style.RelativeSizeSpan
 import android.view.Gravity
 import android.view.View
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.Space
 import android.widget.TextView
+import io.github.proify.lyricon.localprovider.artwork.ArtworkLoader
 import io.github.proify.lyricon.lyric.model.Song
 
-/** Lyrico-style row shared by search results, expanded versions and the playing song. */
+/** One row component, with the reference's distinct information positions for each list. */
 class SongResultCard(
     context: Context, song: Song, album: String, source: String,
     score: Int? = null, moreVersions: Int = 0, expanded: Boolean = false, artwork: String = "",
     onPreview: () -> Unit, onScore: (() -> Unit)? = null, onToggleVersions: (() -> Unit)? = null,
-    lyricStatus: String = "", heroHeader: Boolean = false
+    lyricStatus: String = "", heroHeader: Boolean = false,
+    layoutStyle: LayoutStyle = if(heroHeader) LayoutStyle.SUMMARY else LayoutStyle.RESULT,
+    versionCount: Int? = null, capabilityLabels: List<String>? = null
 ) : LinearLayout(context) {
-    private val palette = ProviderTheme.colors(context)
-    private val ink = palette.text
-    private val muted = palette.muted
-    private val accent = palette.primary
-    private val tint = palette.tint
+    enum class LayoutStyle { RESULT, RECENT, LIBRARY, SUMMARY }
+    private val style=layoutStyle
+    private val palette=ProviderTheme.colors(context)
+    private val ink=palette.text
+    private val muted=palette.muted
+    private val accent=palette.primary
+    private var sideMetadata: LinearLayout?=null
+    private val largeText get()=resources.configuration.fontScale>1.2f
 
     init {
-        orientation = HORIZONTAL; gravity = Gravity.TOP
-        if (!heroHeader) {
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            background = GradientDrawable().apply {
-                setColor(palette.surface); cornerRadius = dp(20).toFloat()
+        tag="songRow:${style.name}"
+        orientation=HORIZONTAL; gravity=Gravity.CENTER_VERTICAL
+        setPadding(dp(10),dp(8),dp(8),dp(8)); ProviderGlass.surface(this,12)
+        isClickable=true; isFocusable=true; setOnClickListener { onPreview() }; ProviderGlass.feedback(this,12)
+        val features=capabilityLabels ?: ProviderSongMetadata.capabilities(song)
+        contentDescription=listOfNotNull(song.name,song.artist,album.takeIf { it.isNotBlank() },source,
+            features.joinToString("、").takeIf { it.isNotBlank() },
+            song.duration.takeIf { it>0 }?.let { "%02d:%02d".format(it/60000,it/1000%60) },
+            versionCount?.let { "$it 份歌词" }).joinToString("，")
+        addView(ImageView(context).apply {
+            tag="songCover"; background=ProviderGlass.solid(context,palette.tint,8,false); clipToOutline=true
+            importantForAccessibility=IMPORTANT_FOR_ACCESSIBILITY_NO; ArtworkLoader.bind(this,artwork)
+        },LayoutParams(dp(if(style==LayoutStyle.SUMMARY) 64 else 52),dp(if(style==LayoutStyle.SUMMARY) 64 else 52)).apply { marginEnd=dp(10) })
+        val info=column().apply { tag="songInfo" }
+        addView(info,LayoutParams(0,-2,1f))
+        info.addView(label(song.name.orEmpty(),if(style==LayoutStyle.SUMMARY) 16 else 15,ink).apply {
+            tag="songTitle"; typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL)
+        },LayoutParams(-1,-2))
+        info.addView(label(listOf(song.artist.orEmpty(),album).filter { it.isNotBlank() }.joinToString(" · "),12,muted).apply {
+            tag="songArtistAlbum"
+        },LayoutParams(-1,-2).apply { topMargin=dp(3) })
+
+        when(style) {
+            LayoutStyle.RESULT -> {
+                val metadata=row().apply { tag="songMetadata" }
+                if(features.isNotEmpty()) {
+                    metadata.addView(featureGroup(features),LayoutParams(-2,-2).apply { marginEnd=dp(5) })
+                    if(source.isNotBlank()) metadata.addView(sourcePill(source),LayoutParams(-2,-2))
+                } else {
+                    if(lyricStatus.isNotBlank()) metadata.addView(label(lyricStatus,10,muted).apply { tag="songFeatures" },LayoutParams(0,-2,1f))
+                    else if(source.isNotBlank()) metadata.addView(sourcePill(source),LayoutParams(-2,-2))
+                }
+                info.addView(metadata,LayoutParams(-1,-2).apply { topMargin=dp(3) })
+            }
+            LayoutStyle.SUMMARY -> if(source.isNotBlank()) {
+                info.addView(sourcePill(source),LayoutParams(-2,-2).apply { topMargin=dp(3) })
+            }
+            LayoutStyle.RECENT -> {
+                val side=row().apply {
+                    tag="songSideMetadata"; orientation=if(largeText) VERTICAL else HORIZONTAL
+                    if(features.isNotEmpty()) addView(featureGroup(features.take(1)),LayoutParams(-2,-2).apply { marginEnd=dp(5) })
+                    if(source.isNotBlank()) addView(sourcePill(source),LayoutParams(if(largeText) -1 else 0,-2,if(largeText) 0f else 1f))
+                }
+                sideMetadata=side
+                addView(side,LayoutParams(dp(130),-2).apply { marginStart=dp(8) })
+            }
+            LayoutStyle.LIBRARY -> {
+                val side=row().apply {
+                    tag="songSideMetadata"; orientation=if(largeText) VERTICAL else HORIZONTAL
+                    addView(featureGroup(features),LayoutParams(if(largeText) -2 else 0,-2,if(largeText) 0f else 1f))
+                    addView(label("${versionCount ?: 1} 份",11,muted).apply { tag="songVersionCount" },LayoutParams(-2,-2).apply { marginStart=dp(8) })
+                }
+                sideMetadata=side
+                addView(side,LayoutParams(dp(130),-2).apply { marginStart=dp(8) })
             }
         }
-        isClickable = true; isFocusable = true; setOnClickListener { onPreview() }
-        contentDescription = listOfNotNull(song.name, song.artist, album.takeIf { it.isNotBlank() }, source).joinToString("，")
-        addView(ImageView(context).apply {
-            tag = "songCover"; setImageDrawable(ProviderIcon("music", muted))
-            background = pill(tint, 8); setPadding(dp(16), dp(16), dp(16), dp(16))
-            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
-            clipToOutline = true
-            io.github.proify.lyricon.localprovider.artwork.ArtworkLoader.bind(this, artwork)
-        }, LayoutParams(dp(if (heroHeader) 62 else 56), dp(if (heroHeader) 62 else 56)).apply { marginEnd = dp(12) })
-        val info = LinearLayout(context).apply { orientation = VERTICAL; tag = "songInfo" }
-        addView(info, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        val header = LinearLayout(context).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        header.addView(label(song.name.orEmpty(), if (heroHeader) 20 else 16, ink).apply {
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); tag = "songTitle"
-            if (heroHeader) { maxLines = 2; ellipsize = TextUtils.TruncateAt.END } else enableMarquee()
-        }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        info.addView(header)
-        val artistAlbum = listOf(song.artist.orEmpty(), album).filter { it.isNotBlank() }.joinToString(" ・ ")
-        if (artistAlbum.isNotBlank()) info.addView(label(artistAlbum, 13, muted).apply { tag = "songArtistAlbum"; enableMarquee() },
-            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(3) })
-        val lines = song.lyrics.orEmpty()
-        val features = buildList {
-            if (lines.isNotEmpty()) add(when {
-                LyricTiming.hasWordTiming(lines) -> "逐字"
-                lines.any { it.begin > 0 || it.end > it.begin } -> "逐行"
-                else -> "纯文本"
-            })
-            if (lines.any { !it.translation.isNullOrBlank() }) add("翻译")
-            if (lines.any { !it.roma.isNullOrBlank() }) add("罗马音")
-        }.joinToString(" | ")
-        val details = LinearLayout(context).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        if (song.duration > 0) details.addView(label("%02d:%02d".format(song.duration / 60000, song.duration / 1000 % 60), 11, muted)
-            .apply { tag = "songDuration" }, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(8) })
-        if (features.isNotBlank() || lyricStatus.isNotBlank()) details.addView(label(features.ifBlank { lyricStatus }, 11,
-            if (features.isNotBlank()) accent else muted).apply { tag = "songFeatures" },
-            LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        if (!heroHeader && details.childCount > 0) info.addView(details, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(7) })
-        if (source.isNotBlank() && !heroHeader) info.addView(badge(source).apply { maxWidth = dp(160); tag = "songSource" },
-            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
-        val footer = LinearLayout(context).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(36) }
-        if (moreVersions > 0 && onToggleVersions != null) {
-            footer.minimumHeight = dp(44)
-            footer.addView(label(if (expanded) "收起版本" else "更多版本 $moreVersions", 10, accent).apply {
-                tag = "songVersions"; gravity = Gravity.CENTER; minimumHeight = dp(44)
-                setPadding(dp(6), 0, dp(4), 0)
-                // Explicit bounds keep the arrow centered even though Drawable has no intrinsic size.
-                setCompoundDrawablesRelative(null, null,
-                    ProviderIcon(if (expanded) "up" else "down", accent).apply { setBounds(0, 0, dp(12), dp(12)) }, null)
-                compoundDrawablePadding = dp(3); isClickable = true; isFocusable = true
+        if(moreVersions>0 && onToggleVersions!=null) {
+            info.addView(label(if(expanded) "收起版本" else "更多版本 $moreVersions",11,accent).apply {
+                tag="songVersions"; minimumHeight=dp(40); gravity=Gravity.CENTER_VERTICAL
+                isClickable=true; isFocusable=true; ProviderGlass.feedback(this,10)
                 setOnClickListener { onToggleVersions() }
-            }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-        } else footer.addView(Space(context), LayoutParams(0, 1, 1f))
-        if (moreVersions > 0 && onToggleVersions != null) info.addView(footer, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-        if (score != null) addView(TextView(context).apply {
-            tag = "songMatchScore"; textSize = 19f; setTextColor(accent); gravity = Gravity.CENTER
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            val value = "$score\n分"
-            text = SpannableString(value).apply { setSpan(RelativeSizeSpan(.58f), value.lastIndex, value.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
-            minimumHeight = dp(52); contentDescription = "匹配 $score 分，查看评分明细"
-            if (onScore != null) { isClickable = true; isFocusable = true; setOnClickListener { onScore() } }
-        }, LayoutParams(dp(44), LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8); gravity = Gravity.CENTER_VERTICAL })
+            },LayoutParams(-1,-2))
+        }
+        if(score!=null) addView(label("$score 分",11,accent).apply {
+            tag="songMatchScore"; minimumHeight=dp(44)
+            val upper=style==LayoutStyle.RESULT
+            gravity=if(upper) Gravity.TOP or Gravity.CENTER_HORIZONTAL else Gravity.CENTER
+            setPadding(0,if(upper) dp(7) else 0,0,0)
+            background=InsetDrawable(ProviderGlass.solid(context,palette.tint,12),0,dp(if(upper) 3 else 11),0,dp(if(upper) 19 else 11))
+            contentDescription="匹配 $score 分，查看评分明细"; ProviderGlass.feedback(this,12)
+            if(onScore!=null) { isClickable=true; isFocusable=true; setOnClickListener { onScore() } }
+        },LayoutParams(dp(48),dp(44)).apply { marginStart=dp(8); if(style==LayoutStyle.RESULT) gravity=Gravity.TOP })
+        addView(ImageView(context).apply { tag="songChevron"; setImageDrawable(ProviderIcon("chevron",muted)); importantForAccessibility=IMPORTANT_FOR_ACCESSIBILITY_NO },
+            LayoutParams(dp(14),dp(14)).apply { marginStart=dp(3) })
     }
-    private fun label(value: String, size: Int, color: Int) = TextView(context).apply {
-        text = value; textSize = size.toFloat(); setTextColor(color); maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END; includeFontPadding = false
+
+    override fun onMeasure(widthMeasureSpec: Int,heightMeasureSpec: Int) {
+        sideMetadata?.let { side ->
+            val remaining=MeasureSpec.getSize(widthMeasureSpec)-paddingLeft-paddingRight-dp(52+10+8+14+3)
+            // Keep the two text lines readable, including at 320dp; trailing metadata truncates first.
+            side.layoutParams.width=minOf(dp(142),maxOf(dp(if(style==LayoutStyle.LIBRARY) 96 else 0),(remaining*.48f).toInt()),(remaining-dp(72)).coerceAtLeast(0))
+        }
+        super.onMeasure(widthMeasureSpec,heightMeasureSpec)
     }
-    private fun TextView.enableMarquee() {
-        setSingleLine(true)
-        ellipsize = TextUtils.TruncateAt.MARQUEE
-        marqueeRepeatLimit = -1
-        isSelected = true
-        setHorizontallyScrolling(true)
+    private fun featureGroup(features: List<String>)=ProviderSongMetadata.features(context,features)
+    private fun sourcePill(source: String)=ProviderSongMetadata.source(context,source)
+    private fun label(value: String,size: Int,color: Int)=TextView(context).apply {
+        text=value; textSize=size.toFloat(); setTextColor(color); maxLines=1; includeFontPadding=false; ellipsize=TextUtils.TruncateAt.END
     }
-    private fun badge(value: String) = label(value, 10, accent).apply {
-        background = pill(tint, 99); setPadding(dp(8), dp(3), dp(8), dp(3))
-    }
-    private fun pill(color: Int, radius: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
-    private fun dp(value: Int) = (resources.displayMetrics.density * value).toInt()
+    private fun row()=LinearLayout(context).apply { orientation=HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
+    private fun column()=LinearLayout(context).apply { orientation=VERTICAL }
+    private fun dp(value: Int)=(resources.displayMetrics.density*value).toInt()
 }

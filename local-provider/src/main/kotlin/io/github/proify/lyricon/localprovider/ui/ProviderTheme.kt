@@ -19,11 +19,11 @@ data class ProviderPalette(val primary: Int, val onPrimary: Int, val background:
 object ProviderTheme {
     private val installed = WeakHashMap<Context, ProviderPalette>()
     private fun prefs(context: Context) = context.getSharedPreferences("provider_appearance", Context.MODE_PRIVATE)
-    val seeds = linkedMapOf("跟随系统" to 0, "蓝色" to 0xFF3482FF.toInt(), "绿色" to 0xFF36D167.toInt(),
+    val seeds = linkedMapOf("跟随系统" to 0, "蓝色" to 0xFF1595FF.toInt(), "绿色" to 0xFF36D167.toInt(),
         "黄色" to 0xFFFFB21D.toInt(), "橙色" to 0xFFFF5722.toInt(), "紫色" to 0xFF7C4DFF.toInt(),
         "粉色" to 0xFFE91E63.toInt(), "青色" to 0xFF00BCD4.toInt())
     fun mode(context: Context) = prefs(context).getString("mode", "auto") ?: "auto"
-    fun monet(context: Context) = prefs(context).getBoolean("monet", true)
+    fun monet(context: Context) = prefs(context).getBoolean("monet", false)
     fun seed(context: Context) = prefs(context).getInt("seed", 0)
     fun setMode(context: Context, value: String) { prefs(context).edit().putString("mode", value).apply() }
     fun setMonet(context: Context, value: Boolean) { prefs(context).edit().putBoolean("monet", value).apply() }
@@ -46,16 +46,16 @@ object ProviderTheme {
         }
         return seeds.getValue("蓝色")
     }
-    fun signature(context: Context) = listOf(mode(context), monet(context), resolvedSeed(context), dark(context)).joinToString(":")
+    fun signature(context: Context) = listOf(mode(context), monet(context), resolvedSeed(context), dark(context), ProviderAppearance.signature(context)).joinToString(":")
     fun colors(context: Context): ProviderPalette = installed[context] ?: create(context).also { installed[context] = it }
     internal fun tonal(seed: Int, dark: Boolean): ProviderPalette = palette(SchemeTonalSpot(Hct.fromInt(seed), dark, 0.0))
     private fun palette(s: SchemeTonalSpot) = ProviderPalette(s.primary, s.onPrimary, s.surface,
         s.surfaceContainer, s.surfaceContainerHigh, s.onSurface, s.onSurfaceVariant, s.primaryContainer, s.outlineVariant)
-    private fun create(context: Context) = if (monet(context)) tonal(resolvedSeed(context), dark(context))
+    private fun create(context: Context) = ProviderAppearance.palette(context, if (monet(context)) tonal(resolvedSeed(context), dark(context))
         else if (dark(context)) ProviderPalette(0xFF66AFFF.toInt(), 0xFF09131B.toInt(), 0xFF111B25.toInt(),
             0xFF18232F.toInt(), 0xFF1C2936.toInt(), 0xFFF2F6FA.toInt(), 0xFF8E9DAC.toInt(), 0xFF203D59.toInt(), 0xFF2B3948.toInt())
-        else ProviderPalette(0xFF3390EC.toInt(), -1, 0xFFF4F6F8.toInt(), -1, -1, 0xFF1C2733.toInt(),
-            0xFF7B8894.toInt(), 0xFFE3EFFB.toInt(), 0xFFD7DFE8.toInt())
+        else ProviderPalette(seed(context).takeIf { it!=0 } ?: 0xFF1595FF.toInt(), -1, 0xFFDDF1FE.toInt(), 0xFFE6F5FE.toInt(), 0xFFE6F5FE.toInt(), 0xFF112D50.toInt(),
+            0xFF50739B.toInt(), 0xFFBFE6FF.toInt(), 0xFFF3FBFF.toInt()))
 
     @SuppressLint("RestrictedApi") // Material's resource override also themes dialogs, menus and native controls.
     fun install(context: Context): ProviderPalette {

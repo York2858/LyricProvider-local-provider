@@ -28,8 +28,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.google.android.material.switchmaterial.SwitchMaterial
+
 import io.github.proify.cloudlyric.provider.LyricsConfig
 import io.github.proify.lyricon.localprovider.BuildConfig
 import io.github.proify.lyricon.localprovider.R
@@ -55,7 +54,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var subtitle: TextView
     private lateinit var back: ImageButton
     private lateinit var nav: LinearLayout
+    private lateinit var footerTools: LinearLayout
     private lateinit var scroll: ScrollView
+    private lateinit var pageHeader: LinearLayout
+    private lateinit var headerAction: ImageButton
     private var tab = "home"
     private var page = "home"
     private val history = ArrayDeque<String>()
@@ -96,8 +98,8 @@ class MainActivity : AppCompatActivity() {
     private val expandedGroups = mutableSetOf<String>()
     private var candidate: SearchCandidate? = null
     private var rememberChoice = true
-    private var showRoma = true
-    private var showTranslation = true
+    private var showRoma = false
+    private var showTranslation = false
     private var savingSelection = false
     private var foreground = false
     private var previewTrack = ""
@@ -167,10 +169,10 @@ class MainActivity : AppCompatActivity() {
     private val bg get() = palette.background
     private val green get() = palette.primary
     private var themeSignature = ""
-    private val titles = mapOf("home" to "当前歌曲", "library" to "歌词库", "settings" to "设置",
+    private val titles = mapOf("home" to "当前歌词", "library" to "歌词库", "settings" to "设置",
         "folders" to "歌词目录", "detail" to "歌词预览", "diagnosis" to "匹配详情",
         "players" to "播放器管理", "cloud" to "云端歌词源", "logs" to "运行记录", "rules" to "歌词过滤",
-        "search" to "搜索歌词", "matching" to "匹配评分规则")
+        "search" to "搜索歌词", "matching" to "匹配评分规则", "appearance" to "外观与布局", "saving" to "保存规则")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         delegate.localNightMode = ProviderTheme.nightMode(this)
@@ -180,23 +182,26 @@ class MainActivity : AppCompatActivity() {
         tab = savedInstanceState?.getString("tab") ?: "home"
         page = savedInstanceState?.getString("page") ?: tab
         savedInstanceState?.getStringArrayList("history")?.let { history.addAll(it) }
-        root = column().apply { setBackgroundColor(bg) }
+        root = column().apply { background = ProviderGlass.page(this@MainActivity) }
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor=android.graphics.Color.TRANSPARENT; window.navigationBarColor=android.graphics.Color.TRANSPARENT
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom); insets
         }
-        val header = row().apply { setPadding(dp(20), dp(20), dp(20), dp(18)) }
+        val header = row().apply { setPadding(dp(12), dp(4), dp(16), dp(6)) }; pageHeader = header
         back = iconButton("back", "返回") { goBack() }
         header.addView(back)
-        heading = text("当前歌曲", 26).apply { typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }
+        heading = text("当前歌词", 20).apply { typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }
         subtitle = text("本地歌词支持", 12, muted)
         header.addView(column().apply {
             addView(heading); addView(subtitle, full(4))
         }, LinearLayout.LayoutParams(0, -2, 1f))
+        headerAction=iconButton("info","歌词信息") { if(page=="detail") fileInfo() else open("diagnosis") }
+        header.addView(headerAction)
         root.addView(header)
         scroll = ScrollView(this).apply { isFillViewport = false; clipToPadding = false }
-        content = column().apply { setPadding(dp(20), 0, dp(20), dp(24)) }
+        content = column().apply { setPadding(dp(16), 0, dp(16), dp(16)) }
         scroll.setOnTouchListener { _, event ->
             if (page == "detail" && event.actionMasked == android.view.MotionEvent.ACTION_MOVE && followPlayback) {
                 followPlayback = false; updateFollowButton()
@@ -205,14 +210,12 @@ class MainActivity : AppCompatActivity() {
         }
         scroll.addView(content)
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        nav = row().apply { setPadding(dp(12), dp(10), dp(12), dp(8)); setBackgroundColor(surface) }
-        root.addView(nav)
+        footerTools=column()
+        root.addView(footerTools,LinearLayout.LayoutParams(-1,-2).apply { setMargins(dp(16),dp(4),dp(16),0) })
+        nav = row().apply { setPadding(dp(5), dp(4), dp(5), dp(4)); ProviderGlass.surface(this,18) }
+        root.addView(nav, LinearLayout.LayoutParams(-1,-2).apply { setMargins(dp(16),dp(4),dp(16),dp(8)) })
         setContentView(root)
-        WindowCompat.getInsetsController(window, root).apply {
-            val light = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK !=
-                android.content.res.Configuration.UI_MODE_NIGHT_YES
-            isAppearanceLightStatusBars = light; isAppearanceLightNavigationBars = light
-        }
+        updateSystemBars()
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() { if (page == tab && tab == "home") finish() else goBack() }
         })
@@ -220,6 +223,14 @@ class MainActivity : AppCompatActivity() {
         if (tab == "search") prepareSearch()
         render()
         scan(false)
+    }
+    private fun updateSystemBars() {
+        val light=androidx.core.graphics.ColorUtils.calculateLuminance(palette.background)>.3
+        WindowCompat.getInsetsController(window,root).apply { isAppearanceLightStatusBars=light; isAppearanceLightNavigationBars=light }
+    }
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if(hasFocus && ::root.isInitialized) updateSystemBars()
     }
     override fun onStart() { super.onStart(); foreground = true; previewRuntime = store.snapshot(); syncSearchWork(); if (page == "search" || page == "detail") render(); restartPreviewTick(); contentResolver.registerContentObserver(ProviderStore.URI, true, observer); if (page == "diagnosis") receiver.start() }
     override fun onStop() { foreground = false; syncPreviewDemand(); syncSearchWork(); main.removeCallbacks(previewTick); receiver.stop(); contentResolver.unregisterContentObserver(observer); super.onStop() }
@@ -241,97 +252,124 @@ class MainActivity : AppCompatActivity() {
     }
     private fun render() {
         if (isDestroyed) return
+        updateSystemBars()
         syncSearchWork()
         if (page != "detail" && previewLoadJob?.isActive == true) {
             previewLoadVersion++; previewLoadJob?.cancel(); previewLoading = false
         }
         heading.text = titles[page] ?: "本地歌词支持"
-        subtitle.visibility = if (page == "home") View.VISIBLE else View.GONE
+        subtitle.visibility = if(page=="library") View.VISIBLE else View.GONE
+        heading.gravity=if(page in setOf("home","search","library","settings")) Gravity.START else Gravity.CENTER
+        val summary=(SavedLyrics(this).files()+files).distinctBy { it.uri }
+        subtitle.text="${summary.groupBy { trackKey(it.song.name,it.song.artist) }.size} 首歌曲 · ${summary.size} 份歌词"
+        headerAction.visibility=when { page=="detail" || page=="home" -> View.VISIBLE
+            page !in setOf("home","search","library","settings") -> View.INVISIBLE; else -> View.GONE }
+        headerAction.setImageDrawable(ProviderIcon(if(page=="home") "levels" else "info",ink))
+        headerAction.contentDescription=if(page=="detail") "歌词信息" else "匹配诊断"
         back.visibility = if (page in setOf("home", "search", "library", "settings")) View.GONE else View.VISIBLE
         if (page != "diagnosis") receiver.stop()
         main.removeCallbacks(previewTick)
         previewRows.clear(); previewTimeline = null; previewPosition = null; previewVisualLine = -1; followButton = null
-        content.removeAllViews()
+        content.removeAllViews(); footerTools.removeAllViews(); footerTools.visibility=View.GONE
         when (page) {
             "home" -> home(); "library" -> library(); "settings" -> settings(); "folders" -> folders()
             "detail" -> detail(); "diagnosis" -> diagnosis(); "players" -> players(); "cloud" -> cloud()
             "rules" -> rules(); "logs" -> logs()
-            "search" -> searchPage(); "matching" -> matchingPage()
+            "search" -> searchPage(); "matching" -> matchingPage(); "appearance" -> appearance(); "saving" -> savingPage()
         }
         restartPreviewTick()
         if (page == "detail") content.doOnLayout { if (foreground && page == "detail") restartPreviewTick() }
         nav.removeAllViews()
-        if (page == "detail" && candidate != null) {
+        if (page == "detail") {
             nav.visibility = View.VISIBLE; nav.orientation = LinearLayout.VERTICAL
             renderDetailActions()
+            footerTools.visibility=if(footerTools.childCount>0) View.VISIBLE else View.GONE
             return
         }
+        nav.setPadding(dp(5),dp(4),dp(5),dp(4))
         nav.orientation = LinearLayout.HORIZONTAL
         nav.visibility = if (page in setOf("home", "search", "library", "settings")) View.VISIBLE else View.GONE
-        listOf(Triple("home", "当前", "home"), Triple("search", "搜索", "search"), Triple("library", "歌词库", "library"), Triple("settings", "设置", "settings")).forEach { (id, title, icon) ->
-            val selected = page == id
-            val b = Button(this).apply {
-                text = title; textSize = 11f; isAllCaps = false; setTextColor(if (selected) purple else muted)
-                background = null; minimumHeight = dp(58); minHeight = dp(58); minWidth = 0; minimumWidth = 0
-                compoundDrawablePadding = dp(3)
-                val indicator = android.graphics.drawable.LayerDrawable(arrayOf(
-                    shape(if (selected) tint else surface, 20), ProviderIcon(icon, if (selected) purple else muted)
-                )).apply {
-                    setLayerInset(1, dp(18), dp(4), dp(18), dp(4))
-                    setBounds(0, 0, dp(56), dp(28))
+        val tabContainer=nav
+        if(page=="library") {
+            footerTools.visibility=View.VISIBLE
+            footerTools.addView(row().apply {
+                listOf(Triple("导入歌词","upload",{ importFile() }),Triple("目录","folder",{ open("folders") }),
+                    Triple(if(scanning) "扫描中…" else "扫描","refresh",{ scan(true) })).forEach { (label,icon,callback) ->
+                    addView(action(label,false,icon,callback),LinearLayout.LayoutParams(0,dp(42),1f).apply { setMargins(dp(2),0,dp(2),dp(2)) })
                 }
-                setCompoundDrawables(null, indicator, null, null)
-                setPadding(0, dp(6), 0, dp(4)); contentDescription = title; isSelected = selected
-                setOnClickListener { if (id == "search") prepareSearch(); tab = id; page = id; choosing = false; history.clear(); render(); scroll.scrollTo(0, 0) }
+            })
+        }
+        listOf(Triple("home", "当前", "home"), Triple("search", "搜索", "search"), Triple("library", "歌词库", "library"), Triple("settings", "设置", "settings")).forEach { (id,title,icon) ->
+            val active=page==id
+            val b=Button(this).apply {
+                stateListAnimator=null; elevation=0f; translationZ=0f
+                text=title; textSize=11f; isAllCaps=false; includeFontPadding=false; gravity=Gravity.CENTER
+                setTextColor(if(active) purple else ink); minHeight=dp(50); minimumHeight=dp(50); minWidth=0; minimumWidth=0
+                background=ProviderGlass.solid(this@MainActivity,if(active) tint else android.graphics.Color.TRANSPARENT,18,false)
+                val drawable=ProviderIcon(icon,if(active) purple else ink).apply { setBounds(0,0,dp(22),dp(22)) }
+                setCompoundDrawables(null,drawable,null,null); compoundDrawablePadding=dp(3); setPadding(dp(2),dp(4),dp(2),dp(4))
+                contentDescription=title; isSelected=active
+                ProviderGlass.feedback(this,18)
+                setOnClickListener { if(id=="search") prepareSearch(); tab=id; page=id; choosing=false; history.clear(); render(); scroll.scrollTo(0,0) }
             }
-            nav.addView(b, LinearLayout.LayoutParams(0, dp(60), 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
+            tabContainer.addView(b,LinearLayout.LayoutParams(0,-2,1f).apply { setMargins(dp(2),0,dp(2),0) })
         }
     }
+
     private fun home() {
         val current = store.snapshot()
         val song = current.song
-        content.addView(text(if (current.updatedAt > 0) "● 已连接${playerName(current.player)}" else "等待播放器连接", 12,
-            if (current.updatedAt > 0) green else muted), full(2, 12))
+        content.addView(text(if (current.updatedAt > 0) "●  已连接 · ${playerName(current.player)}" else "等待播放器连接", 12,
+            if (current.updatedAt > 0) 0xFF27BA7C.toInt() else muted), full(2, 12))
         if (song?.name.isNullOrBlank()) {
-            content.addView(text("播放一首歌，开始匹配歌词", 20), full(20, 12))
-            content.addView(action("管理播放器", false) { open("players") })
-            content.addView(action("搜索歌词", true, "search") { enterSearch() }, full(12))
+            card {
+                addView(text("播放一首歌，开始匹配歌词",20),full(12,10))
+                addView(text("接入播放器后，当前歌词和匹配状态会显示在这里。",13,muted),full(0,12))
+                addView(action("管理播放器",false,"player") { open("players") },full(0,8))
+                addView(action("搜索歌词",true,"search") { enterSearch() },full(0,10))
+            }
             return
         }
         val line = song.lyrics.orEmpty().firstOrNull { !it.roma.isNullOrBlank() && !it.translation.isNullOrBlank() }
             ?: song.lyrics.orEmpty().firstOrNull { !it.translation.isNullOrBlank() || !it.roma.isNullOrBlank() }
             ?: song.lyrics.orEmpty().firstOrNull()
-        content.addView(column().apply {
-            tag = "currentSongHero"; background = shape(surface, 24); setPadding(dp(20), dp(20), dp(20), dp(20))
-            addView(SongResultCard(this@MainActivity, song, current.album, "", artwork = playingArtwork(current),
-                onPreview = { openCurrent() }, heroHeader = true), full())
-            addView(text(line?.text ?: current.message, 23, if (line == null) muted else purple).apply {
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                setLineSpacing(dp(5).toFloat(), 1f)
-            }, full(34))
-            line?.roma?.takeIf { it.isNotBlank() }?.let { addView(text(it, 13, muted), full(10)) }
-            line?.translation?.takeIf { it.isNotBlank() }?.let { addView(text(it, 14, muted), full(8)) }
-            addView(buttonFlow().apply {
-                if (!song.lyrics.isNullOrEmpty()) addView(badges(song))
-                if (current.source.isNotBlank()) addView(text(sourceLabel(current.source), 11, muted).apply {
-                    maxLines = 2; setPadding(0, dp(4), 0, dp(4))
-                })
-            }, full(26))
-        }, full(0, 16))
         content.addView(row().apply {
-            addView(action("搜索 / 换歌词", true, "search") { enterSearch() }, LinearLayout.LayoutParams(0, dp(52), 1f).apply { rightMargin = dp(10) })
-            addView(action("查看歌词", false) { openCurrent() }, LinearLayout.LayoutParams(-2, dp(52)))
-        }, full(0, 8))
-        content.addView(item(current.message.ifBlank { "查看匹配状态" }, "", "匹配详情") { open("diagnosis") }.apply {
-            minimumHeight = dp(44); setPadding(0, dp(6), 0, dp(6))
-        }, full())
-        section("最近使用", "全部") { tab = "library"; page = "library"; render() }
-        val saved = SavedLyrics(this).list().take(2)
-        if (saved.isNotEmpty()) saved.forEach { entry ->
-            content.addView(item(entry.song.name.orEmpty(), "${entry.song.artist.orEmpty()} · ${sourceLabel(entry.source)}", "查看") {
-                openCandidate(SearchCandidate(entry.id, entry.source, entry.song, entry.album, "saved:${entry.id}", entry.artworkUrl))
-            })
-        } else content.addView(text("选用的歌词会保留在歌词库", 12, muted), full(5))
+            tag="currentSongHero"; ProviderGlass.surface(this,16); setPadding(dp(12),dp(14),dp(12),dp(14))
+            addView(ImageView(this@MainActivity).apply {
+                tag="songCover"; clipToOutline=true; background=shape(tint,10)
+                ArtworkLoader.bind(this,playingArtwork(current))
+            },LinearLayout.LayoutParams(dp(112),dp(152)).apply { marginEnd=dp(16) })
+            addView(column().apply {
+                addView(text(song!!.name.orEmpty(),17).apply {
+                    tag="songTitle"; setSingleLine(); ellipsize=android.text.TextUtils.TruncateAt.END
+                    typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL)
+                },full())
+                addView(text(listOf(song.artist.orEmpty(),current.album).filter { it.isNotBlank() }.joinToString(" · "),12,muted).apply {
+                    setSingleLine(); ellipsize=android.text.TextUtils.TruncateAt.END
+                },full(5))
+                addView(text(line?.text ?: current.message,17,ink).apply { maxLines=2 },full(14))
+                line?.translation?.takeIf { it.isNotBlank() }?.let { addView(text(it,16,muted).apply { maxLines=2 },full(5)) }
+                line?.roma?.takeIf { it.isNotBlank() }?.let { addView(text(it,11,muted).apply { maxLines=2 },full(8)) }
+                addView(row().apply {
+                    val capabilities=ProviderSongMetadata.capabilities(song)
+                    if(capabilities.isNotEmpty()) addView(ProviderSongMetadata.features(this@MainActivity,capabilities),LinearLayout.LayoutParams(-2,-2).apply { marginEnd=dp(5) })
+                    if(current.source.isNotBlank()) addView(ProviderSongMetadata.source(this@MainActivity,sourceLabel(current.source)),LinearLayout.LayoutParams(-2,-2))
+                },full(9))
+            },LinearLayout.LayoutParams(0,-2,1f))
+        },full(0,12))
+        content.addView(row().apply {
+            addView(action("搜索 / 换歌词",true,"search") { enterSearch() },LinearLayout.LayoutParams(0,dp(46),1.12f).apply { marginEnd=dp(8) })
+            addView(action("查看歌词",false,"library") { openCurrent() },LinearLayout.LayoutParams(0,dp(46),1f))
+        },full(0,10))
+        content.addView(settingsItem("匹配详情",current.message.ifBlank { "查看本次歌词匹配状态" },"list") { open("diagnosis") }.apply {
+            ProviderGlass.surface(this,14); setPadding(dp(12),dp(8),dp(10),dp(8))
+        },full())
+        section("最近使用")
+        val saved=SavedLyrics(this).list().take(2)
+        if(saved.isNotEmpty()) saved.forEach { entry ->
+            content.addView(SongResultCard(this,entry.song,entry.album,sourceLabel(entry.source),artwork=entry.artworkUrl,layoutStyle=SongResultCard.LayoutStyle.RECENT,
+                onPreview={ openCandidate(SearchCandidate(entry.id,entry.source,entry.song,entry.album,"saved:${entry.id}",entry.artworkUrl)) }),full(6))
+        } else emptyState(content,"选用的歌词会保留在歌词库")
         if (store.choices().containsKey(trackKey(song.name, song.artist))) {
             content.addView(action("恢复自动匹配", false, "refresh") {
                 store.clearChoice(trackKey(song.name, song.artist)); toast("已恢复自动匹配")
@@ -341,30 +379,26 @@ class MainActivity : AppCompatActivity() {
 
     private fun library() {
         val search = EditText(this).apply {
-            hint = "搜索歌名、歌手"; textSize = 14f; setSingleLine(); setText(query)
-            setPadding(dp(14), dp(9), dp(14), dp(9)); background = shape(surface, 14)
+            hint = "搜索歌名、歌手"; textSize = 14f;
+            setCompoundDrawablesRelative(ProviderIcon("search",muted).apply { setBounds(0,0,dp(18),dp(18)) },null,null,null); compoundDrawablePadding=dp(8); setSingleLine(); setText(query)
+            setPadding(dp(14), dp(9), dp(14), dp(9)); ProviderGlass.surface(this,16)
             contentDescription = "搜索本地歌词"
         }
         content.addView(search, full())
-        val tools = buttonFlow()
+        val tools = row()
         listOf("全部", "逐字", "三行").forEach { value ->
-            tools.addView(chip(value, value == filter) { filter = value; renderLibraryRows() })
+            tools.addView(chip(value, value == filter) { filter = value; render() },LinearLayout.LayoutParams(0,-2,1f).apply { marginEnd=dp(7) })
         }
-        val sortButton = action(sort, false, "down") { }
+        val sortButton = action(sort, false, "sort") { }
         sortButton.setOnClickListener {
-            PopupMenu(this, sortButton).apply {
-                listOf("最近更新", "歌名 A–Z", "歌手 A–Z").forEach { menu.add(it) }
-                setOnMenuItemClickListener { sort = it.title.toString(); sortButton.text = sort; renderLibraryRows(); true }; show()
-            }
+            val options=listOf("最近更新","歌名 A–Z","歌手 A–Z")
+            ProviderDialogBuilder(this).setTitle("歌词排序").setSingleChoiceItems(options.toTypedArray(),options.indexOf(sort)) { d,i ->
+                sort=options[i]; sortButton.text=sort; renderLibraryRows(); d.dismiss()
+            }.setNegativeButton("取消",null).show()
         }
-        tools.addView(sortButton)
+        tools.addView(sortButton.apply { minHeight=dp(36); minimumHeight=dp(36); textSize=11f; iconSize=dp(14); setPadding(dp(8),0,dp(8),0) })
         content.addView(tools, full(8))
-        content.addView(buttonFlow().apply {
-            addView(action("导入歌词", false, "plus") { importFile() })
-            addView(action("目录", false, "folder") { open("folders") })
-            addView(action(if (scanning) "扫描中…" else "扫描", false, "refresh") { scan(true) })
-        })
-        content.addView(column().apply { tag = "libraryRows" }, full())
+        content.addView(column().apply { tag = "libraryRows" }, full(2))
         renderLibraryRows()
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -381,16 +415,23 @@ class MainActivity : AppCompatActivity() {
             .filter { filter == "全部" || filter == "逐字" && it.wordLevel || filter == "三行" && it.romanization && it.translated }
         list = when (sort) { "歌名 A–Z" -> list.sortedBy { it.song.name }; "歌手 A–Z" -> list.sortedBy { it.song.artist }; else -> list.sortedByDescending { it.modified } }
         val groups = list.groupBy { trackKey(it.song.name, it.song.artist) }
-        target.addView(text("${groups.size} 首歌曲 · ${list.size} 份歌词", 12, muted), full(12, 5))
-        if (groups.isEmpty()) target.addView(text(if (scanning) "正在扫描…" else "暂无歌词，导入文件或搜索在线歌词", 14, muted), full(25))
+        subtitle.text="${groups.size} 首歌曲 · ${list.size} 份歌词"
+        if (groups.isEmpty()) emptyState(target,if(scanning) "正在扫描…" else "暂无歌词，导入文件或搜索在线歌词")
         groups.values.take(150).forEach { versions ->
             val song = versions.first().song
-            val expanded = column().apply { visibility = View.GONE; setPadding(dp(12), 0, 0, 0) }
-            target.addView(item(song.name.orEmpty(), song.artist.orEmpty().ifBlank { "未知艺术家" }, "${versions.size} 份") {
-                expanded.visibility = if (expanded.visibility == View.GONE) View.VISIBLE else View.GONE
-            })
-            versions.forEach { file -> expanded.addView(item(file.filename, file.directory, "预览") { openCandidate(localCandidate(file)) }) }
-            target.addView(expanded); divider(target)
+            val expanded = column().apply { tag="libraryVersions"; visibility=View.GONE; ProviderGlass.surface(this,12); setPadding(dp(12),dp(4),dp(12),dp(4)) }
+            val group=column()
+            val first=versions.first()
+            val saved=SavedLyrics(this).get(first.uri)
+            val entry=SongResultCard(this,song,saved?.album.orEmpty(),"",artwork=saved?.artworkUrl.orEmpty(),
+                layoutStyle=SongResultCard.LayoutStyle.LIBRARY,versionCount=versions.size,
+                capabilityLabels=buildList {
+                    add(if(first.wordLevel) "逐字" else if(first.romanization && first.translated) "三行" else "逐行")
+                    if(first.translated) add("翻译") else if(first.romanization) add("罗马音")
+                },onPreview={ expanded.visibility=if(expanded.visibility==View.GONE) View.VISIBLE else View.GONE })
+            group.addView(entry)
+            versions.forEach { file -> expanded.addView(item(file.filename,file.directory,"预览") { openCandidate(localCandidate(file)) }) }
+            group.addView(expanded,full(4)); target.addView(group,full(6))
         }
         if (groups.size > 150) target.addView(text("请搜索以查看其他歌曲", 12, muted), full(12))
     }
@@ -401,7 +442,7 @@ class MainActivity : AppCompatActivity() {
         selected = null; candidate = null; detailSong = current.song; detailOffset = 0
         previewTrack = trackKey(current.song?.name, current.song?.artist); previewPlayer = current.player
         followPlayback = true; forcePreviewScroll = true
-        showRoma = true; showTranslation = true; open("detail")
+        showRoma = false; showTranslation = false; open("detail")
     }
     private fun playingArtwork(snapshot: RuntimeSnapshot): String = snapshot.artwork.ifBlank {
         val uri = store.choices()[trackKey(snapshot.song?.name, snapshot.song?.artist)]?.uri.orEmpty()
@@ -435,18 +476,16 @@ class MainActivity : AppCompatActivity() {
         previewLoadVersion++; previewLoadJob?.cancel(); previewLoading = false
         val latest = SearchVersionGroups.find(onlineResults, value.id) ?: value
         candidate = latest; selected = files.firstOrNull { it.uri == latest.localUri }
-        detailSong = latest.song; detailOffset = 0; rememberChoice = true; showRoma = true; showTranslation = true
+        detailSong = latest.song; detailOffset = 0; rememberChoice = true; showRoma = false; showTranslation = false
         open("detail")
         if (latest.remote != null && latest.lyricState != LyricState.READY) loadPreview(latest)
     }
     private fun searchPage() {
         val snapshot = store.snapshot()
-        snapshot.song?.takeIf { !it.name.isNullOrBlank() }?.let { current ->
-            content.addView(text("为「${current.name} · ${current.artist.orEmpty()}」选择歌词", 12, muted), full(0, 14))
-        }
         val input = EditText(this).apply {
             hint = "搜索歌名 / 艺术家"; setSingleLine(); setText(onlineQuery); textSize = 15f
-            setPadding(dp(14), dp(10), dp(14), dp(10)); background = shape(surface, 18)
+            minHeight = dp(48)
+            setPadding(dp(2), dp(8), dp(2), dp(8)); background=null
             setTextColor(ink); setHintTextColor(muted)
             contentDescription = "搜索在线或本地歌词"; imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
             addTextChangedListener(object : TextWatcher {
@@ -457,21 +496,21 @@ class MainActivity : AppCompatActivity() {
             setOnEditorActionListener { _, action, _ -> if (action == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) { runSearch(false); true } else false }
         }
         content.addView(row().apply {
-            addView(input, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(10) })
-            addView(action("搜索", true) { runSearch(false) })
-        })
+            tag="searchField"; ProviderGlass.surface(this,20)
+            addView(iconButton("search","搜索歌词") { runSearch(false) })
+            addView(input,LinearLayout.LayoutParams(0,dp(46),1f))
+            addView(iconButton("close","清空搜索") { input.setText("") })
+        },full(0,10))
+        referenceSongCard(snapshot)
         content.addView(row().apply {
-            addView(row().apply {
-            listOf("全部", "在线", "本地").forEach { label -> addView(chip(label, searchRange == label) {
-                searchRange = label; renderSearchResults()
-                // Refresh the selected appearance without losing the entered query.
-                render()
-            }) }
-            }, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(textAction(if (searchFiltersExpanded) "收起筛选" else "筛选", "settings") {
-                searchFiltersExpanded = !searchFiltersExpanded; render()
-            })
-        }, full(8, 4))
+            tag="searchControls"
+            listOf("全部","在线","本地").forEach { label ->
+                addView(chip(label,searchRange==label) { searchRange=label; render() },LinearLayout.LayoutParams(0,-2,1f).apply { marginEnd=dp(8) })
+            }
+            addView(iconButton("sliders",if(searchFiltersExpanded) "收起筛选" else "筛选") {
+                searchFiltersExpanded=!searchFiltersExpanded; render()
+            }.apply { ProviderGlass.surface(this,20) },LinearLayout.LayoutParams(dp(40),dp(36)))
+        },full(0,2))
         if (searchFiltersExpanded) {
             content.addView(buttonFlow().apply {
             listOf("全部", "逐字", "罗马音").forEach { label -> addView(chip(label, searchFilter == label) {
@@ -479,17 +518,15 @@ class MainActivity : AppCompatActivity() {
             }) }
             val button = action(searchSource, false, "down") {}
             button.setOnClickListener {
-                PopupMenu(this@MainActivity, button).apply {
-                    val sources = listOf("全部来源", "本地") + (LyricsConfig.ALL_PROVIDERS.map { it.id } + "AppleMusic")
-                    sources.forEachIndexed { index, value -> menu.add(0, index, index, sourceLabel(value)) }
-                    setOnMenuItemClickListener { searchSource = sources[it.itemId]; render(); true }; show()
-                }
+                val sources=listOf("全部来源","本地")+(LyricsConfig.ALL_PROVIDERS.map { it.id }+"AppleMusic")
+                ProviderDialogBuilder(this@MainActivity).setTitle("歌词来源").setSingleChoiceItems(sources.map(::sourceLabel).toTypedArray(),sources.indexOf(searchSource)) { d,i ->
+                    searchSource=sources[i]; d.dismiss(); render()
+                }.setNegativeButton("取消",null).show()
             }
             button.text = sourceLabel(searchSource); addView(button)
             }, full(4))
             content.addView(buttonFlow().apply {
                 addView(textAction("修改搜索信息") { editSearchReference() })
-                addView(textAction("评分规则", "settings") { open("matching") })
             }, full(2, 8))
         } else if (searchFilter != "全部" || searchSource != "全部来源") {
             content.addView(text("${searchFilter} · ${sourceLabel(searchSource)}", 12, purple), full(0, 8))
@@ -510,9 +547,12 @@ class MainActivity : AppCompatActivity() {
                 (searchSource == "全部来源" || searchSource == "本地" && row.localUri != null || searchSource == row.source) &&
                     (searchFilter == "全部" || searchFilter == "逐字" && row.wordLevel || searchFilter == "罗马音" && row.roma)
             }.sortedWith(SearchCandidate.ranking(searchReference, store.settings().matchRules))
-        holder.addView(text(if (searchRunning) "正在搜索 $searchedProviders / $totalProviders 个来源 · 已有 ${list.size} 首" else "${list.size} 个结果 · 按匹配分数排序", 12, muted), full(9, 6))
-        if (searchRunning) holder.addView(action("停止搜索", false) { detectionStopped = true; syncSearchWork(); renderSearchResults() })
-        val groups = SearchVersionGroups.groups(list, searchReference, store.settings().matchRules)
+        holder.addView(row().apply {
+            addView(text(if(searchRunning) "正在搜索 $searchedProviders / $totalProviders 个来源 · ${list.size} 份歌词" else "已找到 ${list.size} 份歌词 · ${list.map { it.source }.distinct().size} 个来源",11,muted),LinearLayout.LayoutParams(0,-2,1f))
+            addView(textAction("评分规则","info") { open("matching") }.apply { textSize=11f; minHeight=dp(36); minimumHeight=dp(36); iconSize=dp(15) })
+        },full())
+        if(searchRunning) holder.addView(action("停止搜索",false) { detectionStopped=true; syncSearchWork(); renderSearchResults() })
+        val groups=SearchVersionGroups.groups(list,searchReference,store.settings().matchRules)
         groups.forEach { group ->
             val key = group.parent.id
             val expanded = key in expandedGroups
@@ -531,17 +571,17 @@ class MainActivity : AppCompatActivity() {
                             }
                         } else expandedGroups.remove(key)
                         renderSearchResults()
-                    }), full(10).apply { if (index > 0) marginStart = dp(16) })
+                    }), full(6).apply { if (index > 0) marginStart = dp(16) })
             }
         }
-        if (list.isEmpty()) holder.addView(text(if (searchPerformed) "没有找到歌曲，试试修改关键词或来源" else "点击搜索，查找歌曲；本地结果直接显示", 14, muted), full(22, 16))
+        if (list.isEmpty()) emptyState(holder,if(searchPerformed) "没有找到歌曲，试试修改关键词或来源" else "点击搜索查找歌词，本地结果会直接显示")
         if (searchPerformed && !searchRunning && searchRange != "本地") {
             val selectedIds = activeProviderIds.filter { searchSource == "全部来源" || it == searchSource }
             if (onlineSession.canLoadMore(selectedIds)) {
                 holder.addView(action("加载更多", false, "search") { runSearch(true) }, full(12))
             } else if (onlineResults.isNotEmpty()) holder.addView(text("已加载全部结果", 12, muted), full(12))
             if (searchErrors.isNotEmpty()) holder.addView(action("${searchErrors.size} 个来源失败 · 查看 / 重试", false) {
-                MaterialAlertDialogBuilder(this).setTitle("来源状态").setMessage(searchErrors.entries.joinToString("\n") { "${sourceLabel(it.key)}：${it.value}" })
+                ProviderDialogBuilder(this).setTitle("来源状态").setMessage(searchErrors.entries.joinToString("\n") { "${sourceLabel(it.key)}：${it.value}" })
                     .setNegativeButton("关闭", null).setPositiveButton("重试") { _, _ -> runSearch(true, failedOnly = true) }.show()
             }, full(4))
         }
@@ -642,7 +682,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    private fun editSearchReference() {
+    private fun editSearchReference(): androidx.appcompat.app.AlertDialog {
         val form = column().apply { setPadding(dp(22), dp(6), dp(22), 0) }
         fun field(label: String, value: String) = EditText(this).apply {
             hint = label; setText(value); setSingleLine(); form.addView(text(label, 12, muted)); form.addView(this)
@@ -652,7 +692,7 @@ class MainActivity : AppCompatActivity() {
         val album = field("专辑", searchReference.album.orEmpty())
         val duration = field("时长（秒，留空表示未知）", searchReference.durationMs.takeIf { it > 0 }?.div(1000.0)?.toString().orEmpty())
         duration.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-        MaterialAlertDialogBuilder(this).setTitle("搜索与评分参考信息").setView(form).setNegativeButton("取消", null)
+        return ProviderDialogBuilder(this).setTitle("搜索与评分参考信息").setView(form).setNegativeButton("取消", null)
             .setPositiveButton("搜索") { _, _ ->
                 searchReference = MatchTarget(title.text.toString(), artist.text.toString(), album.text.toString(),
                     duration.text.toString().toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0 && it < 86400 }?.times(1000)?.toLong() ?: 0)
@@ -661,32 +701,28 @@ class MainActivity : AppCompatActivity() {
             }.show()
     }
     private fun scoreDetails(value: SearchCandidate) {
-        val score = MatchScorer.evaluate(searchReference, value.target, store.settings().matchRules)
-        val message = score.parts.joinToString("\n") { part ->
-            if (part.similarity == null) "${part.label}：参考信息未知，不参与"
-            else "${part.label}：相似度 ${(part.similarity * 100).toInt()}% · 权重 ${part.weight} · ${"%.1f".format(part.points)} 分"
-        } + "\n\n" + if (score.eligible) "满足自动匹配规则" else score.reasons.joinToString("\n") + "\n可手动预览和选择"
-        MaterialAlertDialogBuilder(this).setTitle("匹配 ${score.total} 分").setMessage(message).setPositiveButton("知道了", null).show()
+        MatchScoreDialog.show(this, searchReference, value, sourceLabel(value.source), store.settings().matchRules)
     }
     private fun renderDetailActions() {
-        val value = candidate ?: return
+        val value = candidate ?: run {
+            nav.addView(action("搜索 / 换歌词",true,"search") { enterSearch() },full())
+            return
+        }
         if (value.lyricState != LyricState.READY || value.song.lyrics.isNullOrEmpty()) {
             nav.addView(action(if (previewLoading) "正在获取歌词…" else "重新获取歌词", true) { loadPreview(value) }
                 .apply { isEnabled = !previewLoading && value.remote != null }, full())
             return
         }
-        val amount = text("${detailOffset} ms", 12).apply { gravity = Gravity.CENTER }
+        val amount = text("${detailOffset} ms", 12).apply { gravity=Gravity.CENTER; background=ProviderGlass.solid(this@MainActivity,tint,12); minimumHeight=dp(36) }
+        nav.setPadding(dp(12),dp(10),dp(12),dp(10))
         nav.addView(row().apply {
-            addView(text("同步", 12, muted), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(10) })
-            addView(action("− 0.1 秒", false) { detailOffset = (detailOffset - 100).coerceAtLeast(-30000); amount.text = "$detailOffset ms" })
-            addView(amount, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(action("＋ 0.1 秒", false) { detailOffset = (detailOffset + 100).coerceAtMost(30000); amount.text = "$detailOffset ms" })
+            addView(action("− 0.1 秒",false) { detailOffset=(detailOffset-100).coerceAtLeast(-30000); amount.text="$detailOffset ms" }
+                .apply { minHeight=dp(38); minimumHeight=dp(38); minWidth=0; minimumWidth=0 },LinearLayout.LayoutParams(0,-2,1f))
+            addView(amount,LinearLayout.LayoutParams(0,-2,.7f).apply { setMargins(dp(10),0,dp(10),0) })
+            addView(action("＋ 0.1 秒",false) { detailOffset=(detailOffset+100).coerceAtMost(30000); amount.text="$detailOffset ms" }
+                .apply { minHeight=dp(38); minimumHeight=dp(38); minWidth=0; minimumWidth=0 },LinearLayout.LayoutParams(0,-2,1f))
         })
-        nav.addView(CheckBox(this).apply {
-            setPadding(dp(3), dp(6), dp(3), dp(6))
-            text = "记住这首歌，下次自动使用"; setTextColor(ink); textSize = 12f; isChecked = rememberChoice
-            setOnCheckedChangeListener { _, checked -> rememberChoice = checked }
-        })
+        nav.addView(toggle("记住这首歌", "", rememberChoice) { rememberChoice=it }.apply { minimumHeight=dp(44); setPadding(dp(2),0,dp(2),0) })
         nav.addView(action(if (savingSelection) "正在保存…" else "使用这份歌词", true) { applyCandidate(value) }
             .apply { isEnabled = !savingSelection }, full())
     }
@@ -739,10 +775,10 @@ class MainActivity : AppCompatActivity() {
             val modes = linkedMapOf("exact" to "完全一致", "normalized" to "忽略大小写与标点", "fuzzy" to "相似度匹配")
             val button = action(modes[initial].orEmpty(), false, "down") {}
             button.setOnClickListener {
-                PopupMenu(this, button).apply {
-                    modes.entries.forEachIndexed { index, entry -> menu.add(0, index, index, entry.value) }
-                    setOnMenuItemClickListener { val key = modes.keys.toList()[it.itemId]; change(key); button.text = modes[key]; true }; show()
-                }
+                val keys=modes.keys.toList()
+                ProviderDialogBuilder(this).setTitle("$label 比较方式").setItems(modes.values.toTypedArray()) { _,i ->
+                    change(keys[i]); button.text=modes[keys[i]]
+                }.setNegativeButton("取消",null).show()
             }
             content.addView(row().apply { addView(text(label), LinearLayout.LayoutParams(0, -2, 1f)); addView(button) })
         }
@@ -776,65 +812,233 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun settings() {
-        val s = store.settings()
+        val s=store.settings()
         section("外观")
-        card {
-            val mode = ProviderTheme.mode(this@MainActivity)
-            addView(item("主题模式", end = when (mode) { "light" -> "浅色"; "dark" -> "深色"; else -> "跟随系统" }) {
-                val modes = listOf("auto", "light", "dark")
-                MaterialAlertDialogBuilder(this@MainActivity).setTitle("主题模式")
-                    .setSingleChoiceItems(arrayOf("跟随系统", "浅色", "深色"), modes.indexOf(mode)) { dialog, which ->
-                        ProviderTheme.setMode(this@MainActivity, modes[which]); dialog.dismiss(); recreate()
-                    }.setNegativeButton("取消", null).show()
-            })
-            addView(toggle("莫奈取色", "按 Lyrico 的规则生成整套配色", ProviderTheme.monet(this@MainActivity)) {
-                ProviderTheme.setMonet(this@MainActivity, it); recreate()
-            })
-            if (ProviderTheme.monet(this@MainActivity)) {
-                val seeds = ProviderTheme.seeds.entries.toList()
-                val selectedSeed = seeds.indexOfFirst { it.value == ProviderTheme.seed(this@MainActivity) }.coerceAtLeast(0)
-                addView(item("关键色", end = seeds[selectedSeed].key) {
-                    MaterialAlertDialogBuilder(this@MainActivity).setTitle("关键色")
-                        .setSingleChoiceItems(seeds.map { it.key }.toTypedArray(), selectedSeed) { dialog, which ->
-                            ProviderTheme.setSeed(this@MainActivity, seeds[which].value); dialog.dismiss(); recreate()
-                        }.setNegativeButton("取消", null).show()
-                })
-            }
-        }
+        card { addView(settingsItem("外观与布局","主题 · 配色 · 液态玻璃","palette") { open("appearance") }) }
         section("接入")
         card {
-            addView(item("播放器管理", "按实际作用域接入") { open("players") })
-            addView(item("歌词目录", "${s.folders.size} 个目录 · ${s.files.size} 份导入歌词") { open("folders") })
+            addView(settingsItem("播放器管理","","player") { open("players") })
+            addView(settingsItem("歌词目录","","folder") { open("folders") })
+            addView(settingsItem("云端歌词源","","cloud") { open("cloud") })
         }
         section("匹配与保存")
         card {
-            addView(item("匹配评分规则", "标题、艺术家、专辑、时长") { open("matching") })
-            addView(toggle("逐字优先", "本地为逐行时，继续查找逐字歌词", s.wordFirst) { value -> update { it.copy(wordFirst = value) } })
-            addView(toggle("云端补全", "本地无可用歌词时继续搜索", s.cloudEnabled) { value -> update { it.copy(cloudEnabled = value) } })
-            addView(item("云端歌词源", "QQ、网易云、酷狗等") { open("cloud") })
-            addView(toggle("保存云端歌词", "音乐同目录 · 沿用音乐文件名", s.saveCloud) { value -> update { it.copy(saveCloud = value) } })
-            addView(toggle("覆盖同名歌词", "关闭时保留已有文件", s.overwriteCloud) { value -> update { it.copy(overwriteCloud = value) } })
+            addView(settingsItem("匹配评分规则","","sliders") { open("matching") })
+            addView(settingsToggle("逐字优先","本地逐行时继续查找逐字","info",s.wordFirst) { v -> update { it.copy(wordFirst=v) } })
+            addView(settingsToggle("保存云端歌词","沿用音乐文件名","cloud",s.saveCloud) { v -> update { it.copy(saveCloud=v) } })
         }
-        section("更多")
+        section("工具")
         card {
-            addView(item("歌词过滤", "作词、作曲等非歌词信息") { open("rules") })
-            addView(item("运行记录与诊断") { open("logs") })
+            addView(settingsItem("歌词过滤","","filter") { open("rules") })
+            addView(settingsItem("运行记录与诊断","","list") { open("logs") })
         }
-        content.addView(text("本地歌词支持 ${BuildConfig.VERSION_NAME}", 12, muted).apply { gravity = Gravity.CENTER; setPadding(0, dp(20), 0, 0) })
+        content.addView(text("LyricProvider  ${BuildConfig.VERSION_NAME}",11,muted).apply { gravity=Gravity.CENTER; setPadding(0,dp(12),0,dp(6)) })
     }
+    private fun settingsToggle(title: String,subtitle: String,icon: String,checked: Boolean,callback: (Boolean)->Unit): View =
+        toggle(title,subtitle,checked,callback).apply {
+            addView(ImageView(this@MainActivity).apply { setImageDrawable(ProviderIcon(icon,ink)); importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO },0,
+                LinearLayout.LayoutParams(dp(21),dp(21)).apply { marginEnd=dp(10) })
+        }
+
+    private fun savingPage() {
+        val s=store.settings()
+        card {
+            addView(toggle("保存云端歌词","沿用音乐文件名",s.saveCloud) { v -> update { it.copy(saveCloud=v) } })
+            addView(toggle("覆盖同名歌词","关闭时保留已有文件",s.overwriteCloud) { v -> update { it.copy(overwriteCloud=v) } })
+        }
+        card {
+            addView(text("保存位置",14))
+            addView(text("使用现有音乐同目录保存规则；文件访问权限不足时会提示。原歌词与目录授权继续保留。",12,muted),full(6,6))
+        }
+    }
+
+    private fun settingsItem(title: String,subtitle: String,icon: String,onClick: () -> Unit): LinearLayout {
+        val view=item(title,subtitle,callback=onClick)
+        view.addView(ImageView(this).apply { setImageDrawable(ProviderIcon(icon,ink)); importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO },0,
+            LinearLayout.LayoutParams(dp(22),dp(22)).apply { marginEnd=dp(12) })
+        return view
+    }
+
+    private fun appearance() {
+        section("外观预览")
+        content.addView(row().apply {
+            listOf(false to "普通",true to "液态玻璃").forEach { (glass,label) ->
+                val tile=column().apply {
+                    tag=if(glass) "glassPreview" else "plainPreview"
+                    setPadding(dp(8),dp(5),dp(8),dp(8)); minimumHeight=dp(86)
+                    background=android.graphics.drawable.LayerDrawable(arrayOf(ProviderGlass.panel(this@MainActivity,this,14,glass),
+                        GradientDrawable().apply {
+                            cornerRadius=dp(14)*ProviderAppearance.corner(this@MainActivity)/16f
+                            setColor(android.graphics.Color.TRANSPARENT)
+                            if(ProviderAppearance.glass(this@MainActivity)==glass) setStroke(dp(1),purple)
+                        }))
+                    addView(text(label,11,if(ProviderAppearance.glass(this@MainActivity)==glass) purple else muted).apply { gravity=Gravity.CENTER },full(0,7))
+                    addView(row().apply {
+                        background=ProviderGlass.panel(this@MainActivity,this,10,glass); setPadding(dp(6),dp(6),dp(6),dp(6))
+                        addView(ImageView(this@MainActivity).apply {
+                            background=shape(tint,7); clipToOutline=true
+                            ArtworkLoader.bind(this,playingArtwork(store.snapshot()))
+                        },LinearLayout.LayoutParams(dp(40),dp(40)).apply { marginEnd=dp(8) })
+                        addView(column().apply {
+                            addView(text("示例歌曲",12)); addView(text("示例歌手",10,muted),full(4))
+                        },LinearLayout.LayoutParams(0,-2,1f))
+                        addView(ImageView(this@MainActivity).apply { setImageDrawable(ProviderIcon("chevron",muted)) },LinearLayout.LayoutParams(dp(14),dp(14)))
+                    })
+                    isClickable=true; isFocusable=true; contentDescription="$label 外观预览"
+                    ProviderGlass.feedback(this,14)
+                    setOnClickListener { ProviderAppearance.setGlass(this@MainActivity,glass); recreate() }
+                }
+                addView(tile,LinearLayout.LayoutParams(0,-2,1f).apply { if(!glass) marginEnd=dp(10) })
+            }
+        },full())
+        section("主题与配色")
+        card {
+            val mode=ProviderTheme.mode(this@MainActivity)
+            addView(settingsItem("主题模式","","sun") {
+                val modes=listOf("auto","light","dark")
+                ProviderDialogBuilder(this@MainActivity).setTitle("主题模式").setSingleChoiceItems(arrayOf("跟随系统","浅色","深色"),modes.indexOf(mode)) { d,i ->
+                    ProviderTheme.setMode(this@MainActivity,modes[i]); d.dismiss(); recreate()
+                }.setNegativeButton("取消",null).show()
+            }.apply {
+                addView(text(when(mode) { "light"->"浅色"; "dark"->"深色"; else->"跟随系统" },11,muted),childCount-1)
+            })
+            addView(settingsToggle("莫奈取色","","palette",ProviderTheme.monet(this@MainActivity)) { ProviderTheme.setMonet(this@MainActivity,it); recreate() })
+            addView(row().apply {
+                minimumHeight=dp(40)
+                addView(ImageView(this@MainActivity).apply { setImageDrawable(ProviderIcon("palette",ink)) },LinearLayout.LayoutParams(dp(22),dp(22)).apply { marginEnd=dp(12) })
+                addView(text("主题色",15).apply {
+                    minimumHeight=dp(40); isClickable=true; isFocusable=true; contentDescription="自定义主题色"; ProviderGlass.feedback(this,10)
+                    setOnClickListener { customColor("theme","主题色") }
+                },LinearLayout.LayoutParams(0,-2,1f))
+                listOf("蓝色","绿色","紫色","粉色").forEach { label ->
+                    val color=ProviderTheme.seeds.getValue(label)
+                    addView(TextView(this@MainActivity).apply {
+                        tag="themeSwatch:$label"; text=if(ProviderTheme.seed(this@MainActivity)==color || ProviderTheme.seed(this@MainActivity)==0 && label=="蓝色") "✓" else ""
+                        setTextColor(android.graphics.Color.WHITE); gravity=Gravity.CENTER; textSize=14f
+                        background=android.graphics.drawable.InsetDrawable(shape(color,99),dp(6),dp(9),dp(6),dp(9))
+                        contentDescription="$label 主题色"; isClickable=true; isFocusable=true; ProviderGlass.feedback(this,20)
+                        setOnClickListener { ProviderTheme.setSeed(this@MainActivity,color); ProviderTheme.setMonet(this@MainActivity,false); recreate() }
+                    },LinearLayout.LayoutParams(dp(36),dp(40)))
+                }
+            })
+            addView(colorItem("全局背景色","background"))
+            addView(colorItem("控件边框颜色","border"))
+        }
+        section("材质")
+        card {
+            addView(settingsToggle("液态玻璃","默认关闭 · 所有页面统一","drop",ProviderAppearance.glass(this@MainActivity)) {
+                ProviderAppearance.setGlass(this@MainActivity,it); recreate()
+            })
+            addView(settingsItem("模糊与透明度","","blur") { materialControls() })
+            addView(settingsItem("圆角与布局","","corners") { cornerControls() })
+        }
+        content.addView(action("恢复外观默认值",false,"refresh") {
+            ProviderDialogBuilder(this).setTitle("恢复外观默认值？").setMessage("仅恢复主题、配色、玻璃和圆角。歌词、目录授权、播放器、账号与匹配规则都会保留。")
+                .setNegativeButton("取消",null).setPositiveButton("恢复") { _,_ -> ProviderAppearance.reset(this); recreate() }.show()
+        }.apply { setTextColor(purple); icon=ProviderIcon("refresh",purple); iconTint=ColorStateList.valueOf(purple) },full(12))
+    }
+
+    private fun colorItem(title: String,key: String): View {
+        val value=if(key=="background") ProviderAppearance.background(this) else ProviderAppearance.border(this)
+        val view=item(title,end=value?.let { String.format("#%06X",it and 0xFFFFFF) } ?: if(androidx.core.graphics.ColorUtils.calculateLuminance(bg)<.3) "深蓝" else "浅蓝") { customColor(key,title) }
+        view.addView(if(key=="background") ImageView(this).apply { setImageDrawable(ProviderIcon("image",ink)) }
+            else View(this).apply { background=ProviderGlass.solid(this@MainActivity,value ?: palette.line,99) },0,
+            LinearLayout.LayoutParams(dp(20),dp(20)).apply { marginEnd=dp(12) })
+        return view
+    }
+
+    private fun customColor(key: String,title: String) {
+        val current=when(key) { "theme" -> ProviderTheme.seed(this); "background" -> ProviderAppearance.background(this); else -> ProviderAppearance.border(this) }
+        val input=EditText(this).apply {
+            hint="#RRGGBB"; setSingleLine(); setText(current?.takeIf { it!=0 }?.let { String.format("#%06X",it and 0xFFFFFF) }.orEmpty()); contentDescription="$title 自定义颜色"
+        }
+        val body=column().apply {
+            setPadding(dp(20),dp(8),dp(20),0)
+            addView(text("选择预设或输入颜色值",12,muted)); addView(input,full(8))
+        }
+        val dialog=ProviderDialogBuilder(this).setTitle(title).setView(body).setNegativeButton("取消",null).setPositiveButton("应用",null)
+            .setNeutralButton("跟随主题") { _,_ -> if(key=="theme") ProviderTheme.setSeed(this,0) else ProviderAppearance.setColor(this,key,null); recreate() }.create()
+        body.addView(buttonFlow().apply {
+            ProviderTheme.seeds.filter { it.value!=0 }.forEach { (label,color) -> addView(chip(label,false) {
+                input.setText(String.format("#%06X",color and 0xFFFFFF))
+            }) }
+        },full(8))
+        dialog.setOnShowListener { dialog.getButton(-1).setOnClickListener {
+            val raw=input.text.toString().trim().removePrefix("#")
+            if(!Regex("[a-fA-F0-9]{6}").matches(raw)) { input.error="请输入 6 位颜色值，例如 #C9E1F5"; return@setOnClickListener }
+            val color=android.graphics.Color.parseColor("#$raw")
+            if(key=="theme") { ProviderTheme.setSeed(this,color); ProviderTheme.setMonet(this,true) } else ProviderAppearance.setColor(this,key,color)
+            dialog.dismiss(); recreate()
+        } }
+        dialog.show()
+    }
+
+    private fun materialControls() {
+        var blur=ProviderAppearance.blur(this); var opacity=ProviderAppearance.opacity(this)
+        val body=column().apply { setPadding(dp(20),dp(6),dp(20),0) }
+        fun slider(title: String,min: Int,max: Int,initial: Int,change: (Int) -> Unit) {
+            val label=text("$title · $initial",13); body.addView(label,full(10))
+            body.addView(SeekBar(this).apply {
+                this.max=max-min; progress=initial-min; contentDescription=title
+                setOnSeekBarChangeListener(object: SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(v: SeekBar?,p: Int,user: Boolean) { label.text="$title · ${p+min}"; change(p+min) }
+                    override fun onStartTrackingTouch(v: SeekBar?) {}
+                    override fun onStopTrackingTouch(v: SeekBar?) {}
+                })
+            })
+        }
+        slider("模糊",0,32,blur) { blur=it }; slider("透明度",25,90,opacity) { opacity=it }
+        body.addView(text("调整统一应用于卡片、导航和弹窗。",12,muted),full(10))
+        ProviderDialogBuilder(this).setTitle("模糊与透明度").setView(body).setNegativeButton("取消",null).setPositiveButton("应用") { _,_ ->
+            ProviderAppearance.setBlur(this,blur); ProviderAppearance.setOpacity(this,opacity); recreate()
+        }.show()
+    }
+
+    private fun cornerControls() {
+        val values=listOf(12,16,20,24)
+        ProviderDialogBuilder(this).setTitle("圆角与布局").setSingleChoiceItems(values.map { "$it dp" }.toTypedArray(),values.indexOf(ProviderAppearance.corner(this))) { d,i ->
+            ProviderAppearance.setCorner(this,values[i]); d.dismiss(); recreate()
+        }.setNegativeButton("取消",null).show()
+    }
+
+    private fun referenceSongCard(snapshot: RuntimeSnapshot) {
+        val reference=searchReference
+        val box=row().apply { ProviderGlass.surface(this,16); setPadding(dp(12),dp(12),dp(8),dp(12)); minimumHeight=dp(84) }
+        box.addView(ImageView(this).apply { background=shape(tint,10); clipToOutline=true; ArtworkLoader.bind(this,playingArtwork(snapshot)) },
+            LinearLayout.LayoutParams(dp(52),dp(52)).apply { marginEnd=dp(12) })
+        box.addView(column().apply {
+            listOf(reference.title.orEmpty().ifBlank { "参考歌曲" },listOf(reference.artist.orEmpty().ifBlank { "歌手未提供" },reference.album.orEmpty()).filter { it.isNotBlank() }.joinToString(" · "),"专辑 · ${reference.album.orEmpty().ifBlank { "未提供" }}").forEachIndexed { index,value ->
+                addView(text(value,if(index==0) 15 else 12,if(index==0) ink else muted).apply { setSingleLine(); ellipsize=android.text.TextUtils.TruncateAt.END },full(if(index==0) 0 else 4))
+            }
+        },LinearLayout.LayoutParams(0,-2,1f))
+        box.addView(action("修改信息",false,"chevron") { editSearchReference() }.apply {
+            textSize=11f; iconSize=dp(12); iconGravity=MaterialButton.ICON_GRAVITY_TEXT_END
+            setTextColor(purple); icon=ProviderIcon("chevron",purple); iconTint=ColorStateList.valueOf(purple)
+            setPadding(dp(8),0,dp(6),0); minHeight=dp(40); minimumHeight=dp(40); minWidth=0; minimumWidth=0
+            background=android.graphics.drawable.InsetDrawable(ProviderGlass.panel(this@MainActivity,this,14),0,dp(7),0,dp(7))
+        })
+        content.addView(box,full(0,10))
+    }
+
     private fun folders() {
         content.addView(text("支持 LRC、TTML 和音乐内嵌歌词；从所选目录向下搜索最多 ${LocalScan.MAX_DIRECTORY_DEPTH} 层子目录。", 12, muted), full(4, 15))
         store.settings().folders.forEach { folder -> card {
             val readable = if (folder.uri.startsWith("content:")) contentResolver.persistedUriPermissions.any { it.uri.toString() == folder.uri && it.isReadPermission }
                 else java.io.File(folder.uri).canRead()
-            addView(item(folder.name, if (readable) "已获得读取权限" else "未授权，点击重新选择", if (readable) "管理" else "授权") {
-                MaterialAlertDialogBuilder(this@MainActivity).setTitle(folder.name)
+            val displayPath=if(folder.uri.startsWith("content:")) runCatching {
+                DocumentsContract.getTreeDocumentId(Uri.parse(folder.uri)).replace("primary:","内部存储 / ")
+            }.getOrDefault(folder.name) else folder.uri
+            addView(item(folder.name,"${if(readable) "已授权" else "需要重新授权"} · $displayPath",if(readable) "管理" else "授权") {
+                ProviderDialogBuilder(this@MainActivity).setTitle(folder.name)
                     .setItems(arrayOf("重新授权", "移除目录")) { _, index ->
                         if (index == 0) selectFolder() else {
                             update { it.copy(folders = it.folders.filterNot { item -> item.uri == folder.uri }) }
                             releaseGrantIfUnused(folder.uri); scan(true); render()
                         }
                     }.show()
+            }.apply {
+                addView(ImageView(this@MainActivity).apply { setImageDrawable(ProviderIcon("folder",ink)) },0,
+                    LinearLayout.LayoutParams(dp(28),dp(28)).apply { marginEnd=dp(12) })
             })
         } }
         content.addView(action("添加歌词目录", true, "folder") { selectFolder() }, full(10))
@@ -842,7 +1046,7 @@ class MainActivity : AppCompatActivity() {
         if (imported.isNotEmpty()) {
             section("导入的歌词")
             card { imported.forEach { file -> addView(item(file.name, "单独授权的歌词文件", "移除") {
-                MaterialAlertDialogBuilder(this@MainActivity).setTitle("移除这份歌词？")
+                ProviderDialogBuilder(this@MainActivity).setTitle("移除这份歌词？")
                     .setMessage("仅移除插件中的引用，原文件会保留。")
                     .setNegativeButton("取消", null).setPositiveButton("移除") { _, _ ->
                         update { it.copy(files = it.files.filterNot { item -> item.uri == file.uri }) }
@@ -854,51 +1058,53 @@ class MainActivity : AppCompatActivity() {
     private fun detail() {
         previewRuntime = store.snapshot()
         val song = detailSong
-        content.addView(text(song?.name.orEmpty(), 21))
-        content.addView(text(listOfNotNull(song?.artist, candidate?.album?.takeIf { it.isNotBlank() },
-            candidate?.source?.let(::sourceLabel)).joinToString(" · "), 12, muted), full(4, 8))
+        val currentCandidate=candidate
+        content.addView(SongResultCard(this,song ?: Song(),currentCandidate?.album ?: previewRuntime.album,
+            currentCandidate?.source?.let(::sourceLabel).orEmpty(),heroHeader=true,
+            score=currentCandidate?.let { MatchScorer.evaluate(searchReference,it.target,store.settings().matchRules).total },
+            artwork=currentCandidate?.artworkUrl.orEmpty().ifBlank { previewRuntime.artwork },onPreview={ fileInfo() },
+            onScore=currentCandidate?.let { value -> { scoreDetails(value) } }),full(0,10))
         if (song?.lyrics.isNullOrEmpty()) {
             val state = candidate?.lyricState
-            content.addView(text(when {
+            emptyState(content,when {
                 previewLoading || state == LyricState.CHECKING -> "正在获取歌词…"
                 state == LyricState.ERROR -> "歌词获取失败，可点击下方重试"
                 state == LyricState.NONE -> "该版本暂未提供可用歌词，可重试或选择其他版本"
                 else -> "当前没有可预览的歌词"
-            }, 14, muted), full(22))
+            })
             return
         }
-        content.addView(badges(song!!))
-        candidate?.let { item ->
-            val score = MatchScorer.evaluate(searchReference, item.target, store.settings().matchRules)
-            content.addView(action("匹配 ${score.total} 分 · 查看得分", false) { scoreDetails(item) }, full(6))
-        }
-        content.addView(buttonFlow().apply {
-            addView(chip("原文", true) {}.apply { isEnabled = false })
-            addView(chip("罗马音", showRoma) { showRoma = !showRoma; render() })
-            addView(chip("翻译", showTranslation) { showTranslation = !showTranslation; render() })
-            addView(action("信息", false) { fileInfo() })
-        }, full(7))
-        if (candidate == null) content.addView(action("搜索 / 换歌词", true, "search") { enterSearch() }, full(8))
-        content.addView(buttonFlow().apply {
-            addView(action("定位当前歌词", false) { locatePreview() })
-            followButton = action(if (followPlayback) "跟随播放：开" else "跟随播放：关", false) {
-                if (followPlayback) { followPlayback = false; updateFollowButton() } else locatePreview()
+        content.addView(row().apply {
+            tag="previewModes"; ProviderGlass.surface(this,20); setPadding(dp(2),dp(2),dp(2),dp(2))
+            listOf("原文","罗马音","翻译").forEachIndexed { i,label ->
+                val active=when(i) { 1->showRoma; 2->showTranslation; else->!showRoma && !showTranslation }
+                addView(chip(label,active) {
+                    showRoma=i==1; showTranslation=i==2; render()
+                }.apply {
+                    if(!active) background=ProviderGlass.solid(this@MainActivity,android.graphics.Color.TRANSPARENT,20,false)
+                },LinearLayout.LayoutParams(0,dp(36),1f))
+            }
+        },full(0,18))
+        footerTools.addView(row().apply {
+            gravity=Gravity.END
+            followButton=chip(if(followPlayback) "定位当前行 · 跟随中" else "定位当前行 · 跟随暂停",false) { locatePreview() }.apply {
+                textSize=11f; setTextColor(purple); icon=ProviderIcon("locate",purple); iconSize=dp(14); iconPadding=dp(4)
+                contentDescription="定位当前行，跟随播放"; minimumHeight=dp(34); minHeight=dp(34)
             }
             addView(followButton)
-        }, full(9, 7))
+        },full(0,4))
         val timeline = PreviewTimeline(song.lyrics.orEmpty())
         previewTimeline = timeline
         timeline.lines.forEachIndexed { index, line ->
-            val original = text(timeline.display[index].text, 17)
+            val original = text(timeline.display[index].text, 23, muted)
             val lyricRow = column().apply {
-                setPadding(dp(10), dp(14), dp(10), dp(14))
-                addView(text(formatTime(line.begin), 11, muted))
+                setPadding(dp(6), dp(12), dp(6), dp(12))
                 addView(original, full(4))
-                if (showRoma) line.roma?.takeIf { it.isNotBlank() }?.let { addView(text(it, 13, purple), full(5)) }
+                if (showRoma) line.roma?.takeIf { it.isNotBlank() }?.let { addView(text(it, 13, muted), full(5)) }
                 if (showTranslation) line.translation?.takeIf { it.isNotBlank() }?.let { addView(text(it, 14, muted), full(4)) }
             }
             previewRows += lyricRow to original
-            content.addView(lyricRow); divider(content)
+            content.addView(lyricRow)
         }
     }
 
@@ -908,7 +1114,7 @@ class MainActivity : AppCompatActivity() {
         if (foreground && page == "detail") main.post(previewTick)
     }
     private fun updateFollowButton() {
-        followButton?.text = if (followPlayback) "跟随播放：开" else "跟随播放：关"
+        followButton?.text = if (followPlayback) "定位当前行 · 跟随中" else "定位当前行 · 跟随暂停"
     }
     private fun previewPlayback(): io.github.proify.lyricon.localprovider.preview.PlaybackSnapshot? {
         val playing = store.playback()
@@ -929,10 +1135,10 @@ class MainActivity : AppCompatActivity() {
         val old = previewPosition
         if (next != old) {
             old?.let { previous -> previewRows.getOrNull(previous.line)?.let { (row, text) ->
-                row.background = null; text.text = timeline.display[previous.line].text; text.setTextColor(ink)
+                row.background = null; text.text = timeline.display[previous.line].text; text.setTextColor(muted)
             } }
             next?.let { position -> previewRows.getOrNull(position.line)?.let { (row, text) ->
-                row.background = shape(tint, 14); text.setTextColor(if (position.singing) purple else ink)
+                row.background = null; text.setTextColor(if (position.singing) purple else muted)
                 val value = android.text.SpannableString(timeline.display[position.line].text)
                 timeline.display[position.line].words.getOrNull(position.word)?.let { word ->
                     value.setSpan(android.text.style.BackgroundColorSpan(purple), word.start, word.end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -957,7 +1163,7 @@ class MainActivity : AppCompatActivity() {
     private fun fileInfo() {
         val file = selected
         val song = detailSong
-        MaterialAlertDialogBuilder(this).setTitle("歌词信息").setMessage(buildString {
+        ProviderDialogBuilder(this).setTitle("歌词信息").setMessage(buildString {
             appendLine(file?.filename ?: candidate?.song?.name ?: "播放器当前歌词")
             candidate?.let {
                 appendLine("来源：${sourceLabel(it.source)}")
@@ -973,7 +1179,7 @@ class MainActivity : AppCompatActivity() {
     private fun chooseCurrent(file: LyricFile) {
         val current = store.snapshot().song
         if (current?.name.isNullOrBlank()) { toast("请先在播放器中播放一首歌"); return }
-        MaterialAlertDialogBuilder(this).setTitle("用于当前歌曲？")
+        ProviderDialogBuilder(this).setTitle("用于当前歌曲？")
             .setMessage("${file.filename}\n→ ${current?.name} · ${current?.artist.orEmpty()}\n偏移 ${detailOffset} ms")
             .setNegativeButton("取消", null).setPositiveButton("使用") { _, _ ->
                 store.choose(trackKey(current?.name, current?.artist), SongChoice(file.uri, detailOffset))
@@ -1037,8 +1243,15 @@ class MainActivity : AppCompatActivity() {
             if (installed || pkg in s.players && pkg !in ProviderSettings.DEFAULT_PLAYERS) card {
                 addView(toggle(playerName(pkg), if (current.player == pkg) "最近接入 ${formatDate(current.updatedAt)}" else "等待播放器接入", pkg in s.players) { enabled ->
                     update { it.copy(players = if (enabled) it.players + pkg else it.players - pkg) }
+                }.apply {
+                    contentDescription="${playerName(pkg)}，$pkg"
+                    addView(ImageView(this@MainActivity).apply {
+                        tag="playerIcon"; background=ProviderGlass.solid(this@MainActivity,tint,8,false); clipToOutline=true
+                        val appIcon=runCatching { packageManager.getApplicationIcon(pkg) }.getOrNull()
+                        if(appIcon==null) { setImageDrawable(ProviderIcon("player",ink)); setPadding(dp(7),dp(7),dp(7),dp(7)) }
+                        else setImageDrawable(appIcon)
+                    },0,LinearLayout.LayoutParams(dp(36),dp(36)).apply { marginEnd=dp(12) })
                 })
-                addView(text(pkg, 11, muted))
             }
         }
         content.addView(action("添加其他播放器", false) { addPlayer() }, full(10))
@@ -1046,8 +1259,8 @@ class MainActivity : AppCompatActivity() {
         content.addView(text("这里控制是否提供歌词；首次接入还需勾选对应作用域，并重新打开播放器。", 12, muted), full(15))
     }
     private fun addPlayer() {
-        val input = EditText(this).apply { hint = "播放器包名，例如 com.example.music"; inputType = InputType.TYPE_CLASS_TEXT }
-        MaterialAlertDialogBuilder(this).setTitle("添加播放器").setView(input).setNegativeButton("取消", null)
+        val input = EditText(this).apply { hint = "例如 com.example.music"; inputType = InputType.TYPE_CLASS_TEXT; setSingleLine() }
+        ProviderDialogBuilder(this).setTitle("添加播放器").setView(input).setNegativeButton("取消", null)
             .setPositiveButton("添加", null).create().apply {
                 setOnShowListener { getButton(-1).setOnClickListener {
                     val pkg = input.text.toString().trim()
@@ -1057,6 +1270,7 @@ class MainActivity : AppCompatActivity() {
             }
     }
     private fun cloud() {
+        content.addView(settingsItem("保存规则","保存位置与同名文件处理","save") { open("saving") },full(0,8))
         val settings = store.settings()
         card { addView(toggle("启用云端补全", "本地缺少逐字时继续搜索", settings.cloudEnabled) { value -> update { it.copy(cloudEnabled = value) } }) }
         section("歌词源")
@@ -1064,7 +1278,7 @@ class MainActivity : AppCompatActivity() {
         card {
             LyricsConfig.ALL_PROVIDERS.forEach { source -> addView(toggle(labels[source.id] ?: source.id, "", source.id !in settings.disabledSources) { enabled ->
                 update { it.copy(disabledSources = if (enabled) it.disabledSources - source.id else it.disabledSources + source.id) }
-            }) }
+            }.apply { addView(ProviderSourceIcons.view(this@MainActivity,labels[source.id] ?: source.id),0,LinearLayout.LayoutParams(dp(24),dp(24)).apply { marginEnd=dp(12) }) }) }
         }
         section("Apple Music")
         card {
@@ -1087,7 +1301,7 @@ class MainActivity : AppCompatActivity() {
         val language = field("语言", s.appleLanguage)
         val user = field("Media User Token", s.appleUserToken, true)
         val developer = field("Developer Token（可选）", s.appleDeveloperToken, true)
-        val dialog = MaterialAlertDialogBuilder(this).setTitle("Apple Music").setView(form)
+        val dialog = ProviderDialogBuilder(this).setTitle("Apple Music").setView(form)
             .setNegativeButton("取消", null).setNeutralButton("沿用配置文件") { _, _ -> update { it.copy(appleConfigured = false) }; render() }
             .setPositiveButton("保存", null).create()
         dialog.setOnShowListener { dialog.getButton(-1).setOnClickListener {
@@ -1116,8 +1330,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
     private fun addRule(keyword: Boolean) {
-        val input = EditText(this).apply { hint = "需要过滤的词"; maxLines = 1 }
-        MaterialAlertDialogBuilder(this).setTitle(if (keyword) "添加包含词" else "添加精确词")
+        val input = EditText(this).apply { hint = "需要过滤的词"; setSingleLine() }
+        ProviderDialogBuilder(this).setTitle(if (keyword) "添加包含词" else "添加精确词")
             .setView(input).setNegativeButton("取消", null).setPositiveButton("添加") { _, _ ->
                 val value = input.text.toString().trim()
                 if (value.isNotEmpty()) update { if (keyword) it.copy(keywordRules = (it.keywordRules + value).distinct()) else it.copy(exactRules = (it.exactRules + value).distinct()) }
@@ -1125,15 +1339,16 @@ class MainActivity : AppCompatActivity() {
             }.show()
     }
     private fun logs() {
+        content.addView(settingsItem("匹配诊断","核对歌词发送与词幕接收","info") { open("diagnosis") },full(0,8))
         val events = store.events()
         content.addView(buttonFlow().apply {
             addView(action("复制诊断", false) { copyDiagnostic() })
             addView(action("清空记录", false) {
-                MaterialAlertDialogBuilder(this@MainActivity).setTitle("清空运行记录？").setNegativeButton("取消", null)
+                ProviderDialogBuilder(this@MainActivity).setTitle("清空运行记录？").setNegativeButton("取消", null)
                     .setPositiveButton("清空") { _, _ -> store.clearEvents(); render() }.show()
             })
         })
-        if (events.isEmpty()) content.addView(text("暂无运行记录", 14, muted), full(30)) else card {
+        if (events.isEmpty()) emptyState(content,"暂无运行记录") else card {
             events.forEach { event ->
                 addView(text("${formatDate(event.time)} · ${playerName(event.player)}", 11, muted), full(12))
                 if (event.title.isNotBlank()) addView(text(event.title, 14), full(3))
@@ -1214,7 +1429,7 @@ class MainActivity : AppCompatActivity() {
     private fun openModuleManager() {
         val intent = packageManager.getLaunchIntentForPackage("org.lsposed.manager")
         if (intent != null) runCatching { startActivity(intent) }.onFailure { toast("请在 LSPosed 中管理插件作用域") }
-        else MaterialAlertDialogBuilder(this).setTitle("启用播放器作用域")
+        else ProviderDialogBuilder(this).setTitle("启用播放器作用域")
             .setMessage("打开 LSPosed → 模块 → 本地歌词支持，勾选对应播放器，然后重新打开播放器。")
             .setPositiveButton("知道了", null).show()
     }
@@ -1223,77 +1438,95 @@ class MainActivity : AppCompatActivity() {
         "com.maxmpz.audioplayer" -> "Poweramp"; "ink.trantor.coneplayer", "ink.trantor.coneplayer.gp" -> "光锥音乐"
         else -> runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg)
     }
+    private fun emptyState(parent: LinearLayout,message: String) {
+        parent.addView(column().apply { ProviderGlass.surface(this,16); setPadding(dp(16),dp(20),dp(16),dp(20)); addView(text(message,13,muted)) },full(8))
+    }
     private fun sourceLabel(value: String): String = when (value) {
         "Embedded" -> "音乐内嵌歌词"; "ExternalLrc" -> "同目录歌词 / LRC"; "QQMusicProvider" -> "QQ 音乐"
         "NetEase" -> "网易云音乐"; "KuGou" -> "酷狗音乐"; "Soda" -> "汽水音乐"; "AppleMusic" -> "Apple Music"; "LrcLib" -> "LRCLIB"; else -> value
     }
-    private fun badges(song: Song): LinearLayout = row().apply {
-        val lines = song.lyrics.orEmpty()
-        val labels = mutableListOf(if (LyricTiming.hasWordTiming(lines)) "逐字" else "逐行")
-        if (lines.any { !it.roma.isNullOrBlank() }) labels.add("罗马音")
-        if (lines.any { !it.translation.isNullOrBlank() }) labels.add("翻译")
-        labels.forEach { value -> addView(text(value, 11, purple).apply {
-            background = shape(tint, 7); setPadding(dp(8), dp(4), dp(8), dp(4))
-        }, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(6) }) }
-    }
+    private fun badges(song: Song): LinearLayout = ProviderSongMetadata.features(this,ProviderSongMetadata.capabilities(song))
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
     private fun row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
     private fun buttonFlow() = SpacedButtonLayout(this)
     private fun text(value: String, size: Int = 15, color: Int = ink) = TextView(this).apply {
-        text = value; textSize = size.toFloat(); setTextColor(color); gravity = Gravity.CENTER_VERTICAL
+        text = value; textSize = size.toFloat(); setTextColor(color); gravity = Gravity.CENTER_VERTICAL; includeFontPadding=false
         typeface = Typeface.create("sans-serif", Typeface.NORMAL); setLineSpacing(dp(2).toFloat(), 1f)
     }
     private fun action(title: String, primary: Boolean, icon: String? = null, callback: () -> Unit): MaterialButton =
         MaterialButton(this).apply {
-            text = title; isAllCaps = false; textSize = 13f; cornerRadius = dp(16)
-            insetTop = dp(2); insetBottom = dp(2); minHeight = dp(48); minimumHeight = dp(48)
+            text = title; isAllCaps = false; textSize = 13f; stateListAnimator=null; elevation=0f; translationZ=0f
+            iconGravity=MaterialButton.ICON_GRAVITY_TEXT_START
+            cornerRadius = (dp(14)*ProviderAppearance.corner(this@MainActivity)/16f).toInt()
+            insetTop = 0; insetBottom = 0; minHeight = dp(44); minimumHeight = dp(44)
             setPadding(dp(12), dp(4), dp(12), dp(4))
             backgroundTintList = ColorStateList.valueOf(if (primary) purple else surface)
-            setTextColor(if (primary) palette.onPrimary else purple)
-            if (icon != null) { this.icon = ProviderIcon(icon, if (primary) palette.onPrimary else purple); iconSize = dp(17); iconPadding = dp(6); iconTint = ColorStateList.valueOf(if (primary) palette.onPrimary else purple) }
+            setTextColor(if (primary) palette.onPrimary else ink)
+            strokeWidth=dp(1); strokeColor=ColorStateList.valueOf(ProviderAppearance.border(this@MainActivity) ?: if(primary) purple else palette.line)
+            rippleColor=ColorStateList.valueOf(androidx.core.graphics.ColorUtils.setAlphaComponent(if(primary) palette.onPrimary else purple,28))
+            if (icon != null) { this.icon = ProviderIcon(icon, if (primary) palette.onPrimary else ink); iconSize = dp(17); iconPadding = dp(6); iconTint = ColorStateList.valueOf(if (primary) palette.onPrimary else ink) }
             setOnClickListener { callback() }
+            if(!primary) { backgroundTintList=null; background=ProviderGlass.panel(this@MainActivity,this,14); ProviderGlass.feedback(this,14) }
         }
     private fun textAction(title: String, icon: String? = null, callback: () -> Unit) = action(title, false, icon, callback).apply {
         backgroundTintList = ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
+        background=ProviderGlass.solid(this@MainActivity,android.graphics.Color.TRANSPARENT,18,false)
+        setTextColor(purple); icon?.let { this.icon=ProviderIcon(it,purple) }; iconTint=ColorStateList.valueOf(purple)
         setPadding(dp(8), dp(4), dp(8), dp(4)); minWidth = 0; minimumWidth = 0
     }
     private fun chip(title: String, chosen: Boolean, callback: () -> Unit): MaterialButton = action(title, false, callback = callback).apply {
-        backgroundTintList = ColorStateList.valueOf(if (chosen) tint else bg); cornerRadius = dp(10)
-        setTextColor(if (chosen) purple else muted); isSelected = chosen
-        setPadding(dp(8), dp(3), dp(8), dp(3)); minWidth = 0; minimumWidth = 0
+        backgroundTintList = ColorStateList.valueOf(if (chosen) tint else androidx.core.graphics.ColorUtils.setAlphaComponent(palette.muted,10)); cornerRadius = dp(20)
+        setTextColor(if (chosen) palette.onPrimary else muted); isSelected = chosen
+        backgroundTintList=null
+        background=ProviderGlass.solid(this@MainActivity,if(chosen) purple else androidx.core.graphics.ColorUtils.setAlphaComponent(surface,110),20,true)
+        ProviderGlass.feedback(this,20)
+        setPadding(dp(12), dp(3), dp(12), dp(3)); minWidth = 0; minimumWidth = 0; minHeight=dp(36); minimumHeight=dp(36); strokeWidth=0
     }
     private fun iconButton(icon: String, label: String, callback: () -> Unit) = ImageButton(this).apply {
-        setImageDrawable(ProviderIcon(icon, muted)); background = shape(bg, 24); contentDescription = label
+        setImageDrawable(ProviderIcon(icon, muted)); background = ProviderGlass.solid(this@MainActivity,android.graphics.Color.TRANSPARENT,24,false); ProviderGlass.feedback(this,24); contentDescription = label
         setPadding(dp(12), dp(12), dp(12), dp(12)); layoutParams = LinearLayout.LayoutParams(dp(46), dp(46)); setOnClickListener { callback() }
+        if(icon=="close") {
+            setPadding(dp(17),dp(17),dp(17),dp(17))
+            background=android.graphics.drawable.InsetDrawable(ProviderGlass.solid(this@MainActivity,tint,99,false),dp(12))
+        }
     }
     private fun item(title: String, subtitle: String = "", end: String = "", callback: () -> Unit): LinearLayout = row().apply {
-        setPadding(0, dp(11), 0, dp(11)); minimumHeight = dp(56)
-        addView(column().apply { addView(text(title, 15)); if (subtitle.isNotBlank()) addView(text(subtitle, 12, muted).apply { setPadding(0, dp(4), dp(5), 0) }) }, LinearLayout.LayoutParams(0, -2, 1f))
+        setPadding(dp(2), dp(7), dp(2), dp(7)); minimumHeight = dp(if(subtitle.isBlank()) 38 else 52)
+        background=ProviderGlass.solid(this@MainActivity,android.graphics.Color.TRANSPARENT,10,false); ProviderGlass.feedback(this,10)
+        addView(column().apply {
+            addView(text(title,15).apply { maxLines=2; ellipsize=android.text.TextUtils.TruncateAt.END })
+            if(subtitle.isNotBlank()) addView(text(subtitle,12,muted).apply { maxLines=2; ellipsize=android.text.TextUtils.TruncateAt.END; setPadding(0,dp(4),dp(5),0) })
+        },LinearLayout.LayoutParams(0,-2,1f))
         if (end.isNotBlank()) addView(text(end, 12, purple).apply { setPadding(dp(8), 0, dp(5), 0) })
         addView(ImageView(this@MainActivity).apply { setImageDrawable(ProviderIcon("chevron", muted)) }, LinearLayout.LayoutParams(dp(18), dp(18)))
         isClickable = true; isFocusable = true; setOnClickListener { callback() }; contentDescription = "$title${if (subtitle.isNotBlank()) ", $subtitle" else ""}"
     }
     private fun toggle(title: String, subtitle: String, checked: Boolean, callback: (Boolean) -> Unit): LinearLayout = row().apply {
-        minimumHeight = dp(62); setPadding(0, dp(10), 0, dp(10))
+        minimumHeight = dp(if(subtitle.isBlank()) 42 else 50); setPadding(dp(2), dp(2), dp(2), dp(2))
         addView(column().apply { addView(text(title)); if (subtitle.isNotBlank()) addView(text(subtitle, 12, muted).apply { setPadding(0, dp(3), dp(7), 0) }) }, LinearLayout.LayoutParams(0, -2, 1f))
-        val control = SwitchMaterial(this@MainActivity).apply {
-            isChecked = checked; contentDescription = title
-            thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(palette.onPrimary, surface))
-            trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(purple, palette.line))
-            setOnCheckedChangeListener { _, value -> callback(value) }
+        val control = CapsuleSwitch(this@MainActivity).apply {
+            isChecked=checked; contentDescription=title
+            setOnCheckedChangeListener { _,value -> callback(value) }
         }
+        background=ProviderGlass.solid(this@MainActivity,android.graphics.Color.TRANSPARENT,10,false); ProviderGlass.feedback(this,10)
         addView(control); isClickable = true; setOnClickListener { control.isChecked = !control.isChecked }
     }
     private fun card(block: LinearLayout.() -> Unit) { cardIn(content).apply(block) }
     private fun cardIn(parent: LinearLayout) = column().apply {
-        background = shape(surface, 21); setPadding(dp(16), dp(13), dp(16), dp(13))
-        parent.addView(this, full(8))
+        ProviderGlass.surface(this,14)
+        val verticalPadding=if(page in setOf("settings","appearance","players","cloud","folders")) 2 else 12
+        setPadding(dp(12),dp(verticalPadding),dp(12),dp(verticalPadding))
+        if(page in setOf("settings","appearance","players","cloud")) {
+            showDividers=LinearLayout.SHOW_DIVIDER_MIDDLE
+            dividerDrawable=GradientDrawable().apply { setColor(androidx.core.graphics.ColorUtils.setAlphaComponent(palette.line,95)); setSize(1,dp(1)) }
+        }
+        parent.addView(this, full(3))
     }
     private fun section(title: String, action: String? = null, callback: (() -> Unit)? = null) {
         content.addView(row().apply {
-            addView(text(title, 14, ink).apply { typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }, LinearLayout.LayoutParams(0, dp(43), 1f))
+            addView(text(title, 13, if(page=="home") ink else muted).apply { typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }, LinearLayout.LayoutParams(0, dp(24), 1f))
             if (action != null && callback != null) addView(textAction(action, callback = callback))
-        }, full(9))
+        }, full(6))
     }
     private fun shape(color: Int, radius: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
     private fun divider(parent: LinearLayout) { parent.addView(View(this).apply { setBackgroundColor(palette.line) }, LinearLayout.LayoutParams(-1, dp(1))) }
