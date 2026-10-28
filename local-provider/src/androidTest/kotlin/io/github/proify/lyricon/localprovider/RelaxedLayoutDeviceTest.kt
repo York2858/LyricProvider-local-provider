@@ -68,9 +68,13 @@ class RelaxedLayoutDeviceTest {
                 assertNotNull(hero)
                 assertTrue(hero.width > 0 && hero.height > 0)
                 val content = views(hero).filterIsInstance<TextView>().map { it.text.toString() }
-                assertTrue(content.containsAll(listOf(song.name, "风轻轻地吹过", "实机验证译文")))
+                assertTrue(content.contains(song.name))
+                assertFalse(content.contains("风轻轻地吹过"))
+                assertFalse(content.contains("实机验证译文"))
+                assertFalse(content.contains("Kaze ga sotto tōrisugiru"))
                 val cover = hero.findViewWithTag<View>("songCover")
-                assertEquals((112 * context.resources.displayMetrics.density).toInt(), cover.width)
+                assertEquals((96 * context.resources.displayMetrics.density).toInt(), cover.width)
+                assertEquals(cover.width,cover.height)
             }
             screenshot("relaxed-home")
             onView(allOf(withText("搜索"), isAssignableFrom(Button::class.java))).perform(activate())

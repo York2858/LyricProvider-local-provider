@@ -330,15 +330,12 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        val line = song.lyrics.orEmpty().firstOrNull { !it.roma.isNullOrBlank() && !it.translation.isNullOrBlank() }
-            ?: song.lyrics.orEmpty().firstOrNull { !it.translation.isNullOrBlank() || !it.roma.isNullOrBlank() }
-            ?: song.lyrics.orEmpty().firstOrNull()
         content.addView(row().apply {
             tag="currentSongHero"; ProviderGlass.surface(this,16); setPadding(dp(12),dp(14),dp(12),dp(14))
             addView(ImageView(this@MainActivity).apply {
                 tag="songCover"; clipToOutline=true; background=shape(tint,10)
-                ArtworkLoader.bind(this,playingArtwork(current))
-            },LinearLayout.LayoutParams(dp(112),dp(152)).apply { marginEnd=dp(16) })
+                ArtworkLoader.bind(this,playingArtwork(current),ImageView.ScaleType.FIT_CENTER)
+            },LinearLayout.LayoutParams(dp(96),dp(96)).apply { marginEnd=dp(16) })
             addView(column().apply {
                 addView(text(song!!.name.orEmpty(),17).apply {
                     tag="songTitle"; setSingleLine(); ellipsize=android.text.TextUtils.TruncateAt.END
@@ -347,9 +344,6 @@ class MainActivity : AppCompatActivity() {
                 addView(text(listOf(song.artist.orEmpty(),current.album).filter { it.isNotBlank() }.joinToString(" · "),12,muted).apply {
                     setSingleLine(); ellipsize=android.text.TextUtils.TruncateAt.END
                 },full(5))
-                addView(text(line?.text ?: current.message,17,ink).apply { maxLines=2 },full(14))
-                line?.translation?.takeIf { it.isNotBlank() }?.let { addView(text(it,16,muted).apply { maxLines=2 },full(5)) }
-                line?.roma?.takeIf { it.isNotBlank() }?.let { addView(text(it,11,muted).apply { maxLines=2 },full(8)) }
                 addView(row().apply {
                     val capabilities=ProviderSongMetadata.capabilities(song)
                     if(capabilities.isNotEmpty()) addView(ProviderSongMetadata.features(this@MainActivity,capabilities),LinearLayout.LayoutParams(-2,-2).apply { marginEnd=dp(5) })

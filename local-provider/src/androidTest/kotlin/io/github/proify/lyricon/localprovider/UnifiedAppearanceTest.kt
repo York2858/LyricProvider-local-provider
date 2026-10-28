@@ -54,7 +54,13 @@ class UnifiedAppearanceTest {
                 val cover=hero.findViewWithTag<View>("songCover")
                 val title=hero.findViewWithTag<View>("songTitle")
                 val c=Rect(); val t=Rect(); cover.getGlobalVisibleRect(c); title.getGlobalVisibleRect(t)
-                assertTrue("Hero artwork must be portrait",cover.height>cover.width)
+                assertEquals("Home artwork must be square",cover.width,cover.height)
+                val image=cover as android.widget.ImageView
+                assertEquals(android.widget.ImageView.ScaleType.FIT_CENTER,image.scaleType)
+                val heroText=all(hero).filterIsInstance<TextView>().map { it.text.toString() }
+                assertFalse("Home lyric excerpt must be removed",heroText.contains("风经过窗边"))
+                assertFalse(heroText.contains("留下温柔的回声"))
+                assertFalse(heroText.contains("Feng jing guo chuang bian"))
                 assertTrue("Hero text must sit right of artwork",t.left>=c.right)
             }
             "search" -> {

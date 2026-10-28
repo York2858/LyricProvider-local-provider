@@ -23,7 +23,7 @@ object ArtworkLoader {
     private val failedUntil = LruCache<String, Long>(200)
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<Bitmap?>>()
 
-    fun bind(view: ImageView, source: String) {
+    fun bind(view: ImageView, source: String, scaleType: ImageView.ScaleType = ImageView.ScaleType.CENTER_CROP) {
         if (view.getTag(R.id.provider_artwork_request) == source) return
         view.setTag(R.id.provider_artwork_request, source)
         val padding = (view.resources.displayMetrics.density * 16).toInt()
@@ -31,7 +31,7 @@ object ArtworkLoader {
         view.setImageDrawable(ProviderIcon("music", view.context.getColor(R.color.provider_muted)))
         if (source.isBlank()) return
         val key = SearchCandidate.digest(source)
-        fun show(bitmap: Bitmap) { view.setPadding(0, 0, 0, 0); view.scaleType = ImageView.ScaleType.CENTER_CROP; view.setImageBitmap(bitmap) }
+        fun show(bitmap: Bitmap) { view.setPadding(0, 0, 0, 0); view.scaleType = scaleType; view.setImageBitmap(bitmap) }
         cache.get(key)?.let { show(it); return }
         if ((failedUntil.get(key) ?: 0L) > android.os.SystemClock.elapsedRealtime()) return
         val context = view.context.applicationContext
@@ -65,7 +65,7 @@ object ArtworkLoader {
             }
             if (bitmap != null) withContext(Dispatchers.Main.immediate) {
                 reference.get()?.takeIf { it.getTag(R.id.provider_artwork_request) == source }?.let { target ->
-                    target.setPadding(0, 0, 0, 0); target.scaleType = ImageView.ScaleType.CENTER_CROP; target.setImageBitmap(bitmap)
+                    target.setPadding(0, 0, 0, 0); target.scaleType = scaleType; target.setImageBitmap(bitmap)
                 }
             }
         }
