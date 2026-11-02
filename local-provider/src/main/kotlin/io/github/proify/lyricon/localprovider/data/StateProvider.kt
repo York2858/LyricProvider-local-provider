@@ -20,6 +20,15 @@ class StateProvider : ContentProvider() {
         val trusted = packages.intersect(if (method == "config") store.settings().knownPlayers else store.settings().players)
         if (!own && trusted.isEmpty()) throw SecurityException("Player has not been enabled")
         return when (method) {
+            "preference_observe" -> {
+                val raw = extras?.getString("json").orEmpty()
+                require(raw.length <= 40_000)
+                val observation = ProviderStore.json.decodeFromString<PreferenceObservation>(raw)
+                require(own || observation.player in trusted)
+                require(observation.title.length <= 2000 && observation.candidates.size <= 30)
+                PreferenceRecordStore(app).observe(observation)
+                Bundle.EMPTY
+            }
             "playback" -> {
                 val raw = extras?.getString("json").orEmpty()
                 require(raw.length <= 4000)

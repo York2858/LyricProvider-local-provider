@@ -358,6 +358,9 @@ class MainActivity : AppCompatActivity() {
         content.addView(settingsItem("匹配详情",current.message.ifBlank { "查看本次歌词匹配状态" },"list") { open("diagnosis") }.apply {
             ProviderGlass.surface(this,14); setPadding(dp(12),dp(8),dp(10),dp(8))
         },full())
+        content.addView(settingsItem("收藏与评分", "记录播放器操作 · 调用 Lyrico 写入标签", "save") {
+            startActivity(Intent(this, PreferenceRecordsActivity::class.java))
+        }, full(10))
         section("最近使用")
         val saved=SavedLyrics(this).list().take(2)
         if(saved.isNotEmpty()) saved.forEach { entry ->
@@ -809,6 +812,9 @@ class MainActivity : AppCompatActivity() {
         val s=store.settings()
         section("外观")
         card { addView(settingsItem("外观与布局","主题 · 配色 · 液态玻璃","palette") { open("appearance") }) }
+        card { addView(settingsItem("收藏与评分","播放器记录 · 手动写入文件标签","save") {
+            startActivity(Intent(this@MainActivity, PreferenceRecordsActivity::class.java))
+        }) }
         section("接入")
         card {
             addView(settingsItem("播放器管理","","player") { open("players") })

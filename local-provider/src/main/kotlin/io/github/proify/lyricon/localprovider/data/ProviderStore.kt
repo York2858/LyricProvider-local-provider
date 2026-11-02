@@ -30,7 +30,8 @@ class ProviderStore(private val context: Context) {
         currentPlayback = value
         context.contentResolver.notifyChange(PLAYBACK_URI, null)
     }
-    fun settings(): ProviderSettings = decode(prefs.getString("settings", null), ProviderSettings())
+    fun settings(): ProviderSettings = decode(prefs.getString("settings", null), ProviderSettings()).copy(
+        recordPreferences = context.getSharedPreferences("playback_preferences", Context.MODE_PRIVATE).getBoolean("enabled", true))
     fun snapshot(): RuntimeSnapshot = decode(prefs.getString("snapshot", null), RuntimeSnapshot())
     fun events(): List<RuntimeEvent> = decode(prefs.getString("events", null), emptyList())
     fun choices(): Map<String, SongChoice> = decode(prefs.getString("choices", null), emptyMap())

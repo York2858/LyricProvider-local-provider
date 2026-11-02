@@ -10,6 +10,7 @@ data class LyricFolder(val uri: String, val name: String)
 @Serializable
 data class ProviderSettings(
     val revision: Long = 0,
+    val recordPreferences: Boolean = true,
     val wordFirst: Boolean = true,
     val cloudEnabled: Boolean = true,
     val saveCloud: Boolean = true,

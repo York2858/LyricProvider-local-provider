@@ -112,6 +112,9 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
                     runCatching {
                         val state = args[0] as? PlaybackState ?: return@runCatching
                         if (appContext?.packageName !in RuntimeBridge.settings.players) return@runCatching
+                        (instance as? android.media.session.MediaSession)?.let { session ->
+                            appContext?.let { PreferenceReporter.playback(it, session, state) }
+                        }
                         RuntimeBridge.reportPlayback(state)
                         provider?.player?.setPlaybackState(state)
                         BridgeV4Sender.sendPlaybackState(appContext ?: return@runCatching, processName, state)
@@ -128,6 +131,9 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
                 after {
                     runCatching {
                         val metadata = args[0] as? MediaMetadata ?: return@runCatching
+                        (instance as? android.media.session.MediaSession)?.let { session ->
+                            appContext?.let { PreferenceReporter.metadata(it, session, metadata) }
+                        }
                         handleMetadata(metadata)
                         (instance as? android.media.session.MediaSession)?.controller?.playbackState?.let(RuntimeBridge::reportPlayback)
                     }.onFailure { error ->

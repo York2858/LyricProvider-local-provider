@@ -107,7 +107,10 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
             }.hook {
                 after {
                     if (appContext?.packageName in RuntimeBridge.settings.players) {
-                        (args[0] as? android.media.MediaMetadata)?.let(RuntimeBridge::captureArtwork)
+                        (args[0] as? android.media.MediaMetadata)?.let { metadata ->
+                            RuntimeBridge.captureArtwork(metadata)
+                            (instance as? android.media.session.MediaSession)?.let { session -> appContext?.let { PreferenceReporter.metadata(it, session, metadata) } }
+                        }
                     }
                 }
             }
@@ -120,6 +123,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
                     runCatching {
                         val state = args[0] as? PlaybackState ?: return@runCatching
                         if (appContext?.packageName !in RuntimeBridge.settings.players) return@runCatching
+                        (instance as? android.media.session.MediaSession)?.let { session -> appContext?.let { PreferenceReporter.playback(it, session, state) } }
                         RuntimeBridge.reportPlayback(state)
                         provider?.player?.setPlaybackState(state)
                     }.onFailure { error ->
