@@ -219,7 +219,6 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() { if (page == tab && tab == "home") finish() else goBack() }
         })
-        store.connectPlayers()
         if (tab == "search") prepareSearch()
         render()
         scan(false)
@@ -237,6 +236,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() { onlineSession.close(); searchScope.cancel(); io.shutdownNow(); main.removeCallbacksAndMessages(null); super.onDestroy() }
     override fun onResume() {
         super.onResume()
+        store.connectPlayers()
         if (themeSignature.isNotBlank() && themeSignature != ProviderTheme.signature(this)) recreate()
     }
     override fun onSaveInstanceState(outState: Bundle) {

@@ -12,6 +12,7 @@ import androidx.test.espresso.assertion.ViewAssertions.matches
 import io.github.proify.lyricon.localprovider.data.*
 import io.github.proify.lyricon.localprovider.ui.PreferenceRecordsActivity
 import io.github.proify.lyricon.localprovider.xposed.PreferenceReporter
+import kotlinx.serialization.encodeToString
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -30,6 +31,7 @@ class PreferenceRecordsIntegrationTest {
             prefs.edit().remove("records").putBoolean("enabled",true).commit()
             settings.update{it.copy(players=it.players+context.packageName)}
             RuntimeBridge.initialize(context){}
+            await { context.packageName in RuntimeBridge.settings.players }
             session=MediaSession(context,"Preference fixture")
             fun send(value:Rating){PreferenceReporter.metadata(context,session!!,MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_MEDIA_ID,"fixture")
                 .putString(MediaMetadata.METADATA_KEY_TITLE,"Preference fixture").putRating(MediaMetadata.METADATA_KEY_USER_RATING,value).build())}
@@ -52,6 +54,71 @@ class PreferenceRecordsIntegrationTest {
             if(oldRecords==null)prefs.edit().remove("records").commit()else prefs.edit().putString("records",oldRecords).commit()
         }
     }
+    @Test fun rapidProgressDoesNotCancelRatingAndDeletedWorkStaysDeleted() {
+        val settings = ProviderStore(context)
+        val old = settings.settings()
+        val prefs = context.getSharedPreferences("playback_preferences",0)
+        val oldRecords = prefs.getString("records",null)
+        val oldEnabled = prefs.getBoolean("enabled",true)
+        val records = PreferenceRecordStore(context)
+        val session = MediaSession(context,"Preference progress fixture")
+        try {
+            prefs.edit().remove("records").putBoolean("enabled",true).commit()
+            settings.update { it.copy(players=it.players+context.packageName) }
+            RuntimeBridge.initialize(context) {}
+            await { context.packageName in RuntimeBridge.settings.players }
+            val metadata = MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_MEDIA_ID,"progress-fixture")
+                .putString(MediaMetadata.METADATA_KEY_TITLE,"Progress fixture")
+                .putRating(MediaMetadata.METADATA_KEY_USER_RATING,Rating.newStarRating(Rating.RATING_5_STARS,5f)).build()
+            PreferenceReporter.metadata(context,session,metadata)
+            repeat(100) { position ->
+                PreferenceReporter.playback(context,session,android.media.session.PlaybackState.Builder()
+                    .setState(android.media.session.PlaybackState.STATE_PLAYING,position.toLong(),1f).build())
+            }
+            await { records.records().any { it.title=="Progress fixture" && it.rating==100 } }
+            val current = records.records().single { it.title=="Progress fixture" }
+            records.delete(setOf(current.id))
+            records.observe(PreferenceObservation(context.packageName,"progress-fixture","Progress fixture",rating=100))
+            assertFalse(records.records().single { it.id==current.id }.hasChanges)
+            records.observe(PreferenceObservation(context.packageName,"progress-fixture","Progress fixture",rating=80))
+            assertEquals(80,records.records().single { it.id==current.id }.rating)
+        } finally {
+            session.release(); settings.update { old }
+            prefs.edit().putBoolean("enabled",oldEnabled).apply {
+                if(oldRecords==null)remove("records") else putString("records",oldRecords)
+            }.commit()
+        }
+    }
+
+    @Test fun reconnectDeliversRetainedOutboxWithoutANewPlaybackEvent() {
+        val settings = ProviderStore(context)
+        val oldSettings = settings.settings()
+        val prefs = context.getSharedPreferences("playback_preferences",0)
+        val oldRecords = prefs.getString("records",null)
+        val oldEnabled = prefs.getBoolean("enabled",true)
+        val outbox = context.getSharedPreferences("local_provider_preference_outbox",0)
+        val oldOutbox = outbox.all.mapValues { it.value as String }
+        try {
+            prefs.edit().remove("records").putBoolean("enabled",true).commit()
+            settings.update { it.copy(players=it.players+context.packageName) }
+            RuntimeBridge.initialize(context) {}
+            await { context.packageName in RuntimeBridge.settings.players }
+            val observation = PreferenceObservation(context.packageName,"retained-fixture","Retained delivery fixture",rating=100)
+            val key = "${observation.identity()}:${observation.observedAt}"
+            outbox.edit().clear().putString(key,ProviderStore.json.encodeToString(observation)).commit()
+            // Opening the module reconnects players using the same refresh signal.
+            settings.connectPlayers()
+            await { PreferenceRecordStore(context).records().any { it.id==observation.identity() && it.rating==100 } }
+            await { !outbox.contains(key) }
+        } finally {
+            settings.update { oldSettings }
+            prefs.edit().putBoolean("enabled",oldEnabled).apply {
+                if(oldRecords==null)remove("records") else putString("records",oldRecords)
+            }.commit()
+            outbox.edit().clear().apply { oldOutbox.forEach { (key,value) -> putString(key,value) } }.commit()
+        }
+    }
+
     @Test fun recordPageSelectsPreviewsCallsLyricoAndReceivesFailureForMissingFile() {
         val prefs=context.getSharedPreferences("playback_preferences",0)
         val old=prefs.getString("records",null)
@@ -75,6 +142,27 @@ class PreferenceRecordsIntegrationTest {
             onView(withText("未完成")).check(matches(isDisplayed()))
         }finally{activity?.let{inst.runOnMainSync{it.finish()}};if(old==null)prefs.edit().remove("records").commit()else prefs.edit().putString("records",old).commit()}
     }
+    @Test fun deletingRecordFromPageKeepsTheAudioFile() {
+        val prefs=context.getSharedPreferences("playback_preferences",0)
+        val old=prefs.getString("records",null)
+        val file=java.io.File(context.cacheDir,"delete-record-fixture.wav").apply { writeText("untouched fixture") }
+        var activity:android.app.Activity?=null
+        try {
+            prefs.edit().remove("records").commit()
+            val store=PreferenceRecordStore(context)
+            store.observe(PreferenceObservation("com.neutroncode.mp","delete-fixture","Delete fixture",rating=100,
+                file=PreferenceFile(path=file.path,source="手动确认")))
+            activity=inst.startActivitySync(Intent(context,PreferenceRecordsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            onView(withText("删除此记录")).perform(click())
+            onView(withText("删除")).perform(click())
+            await { store.records().none { it.hasChanges } }
+            assertEquals("untouched fixture",file.readText())
+        } finally {
+            activity?.let { inst.runOnMainSync { it.finish() } };file.delete()
+            if(old==null)prefs.edit().remove("records").commit() else prefs.edit().putString("records",old).commit()
+        }
+    }
+
     @Test fun manualUriHandoffWritesFileAndReturnsToRecordPage() {
         val prefs=context.getSharedPreferences("playback_preferences",0)
         val old=prefs.getString("records",null)

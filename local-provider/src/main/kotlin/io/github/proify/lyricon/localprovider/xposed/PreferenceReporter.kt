@@ -19,23 +19,30 @@ import java.util.WeakHashMap
 object PreferenceReporter {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val metadata = WeakHashMap<MediaSession, MediaMetadata>()
-    private val jobs = WeakHashMap<MediaSession, Job>()
+    private val snapshots = WeakHashMap<MediaSession, String>()
+    private var deliveryJob: Job? = null
     private val pathCache = object : LinkedHashMap<String, Pair<Long,List<PreferenceFile>>>(64,.75f,true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long,List<PreferenceFile>>>?) = size>64
     }
     @Synchronized fun metadata(context: Context, session: MediaSession, value: MediaMetadata) {
         metadata[session] = value
-        schedule(context, session, value, null)
+        schedule(context, session, value, session.controller.playbackState)
     }
     @Synchronized fun playback(context: Context, session: MediaSession, value: PlaybackState) {
         val current = metadata[session] ?: return
         schedule(context, session, current, value)
     }
     private fun schedule(context: Context, session: MediaSession, value: MediaMetadata, state: PlaybackState?) {
-        jobs.remove(session)?.cancel()
+        if (!RuntimeBridge.settings.recordPreferences || context.packageName !in RuntimeBridge.settings.players) return
+        val signature = listOf(value.getString(MediaMetadata.METADATA_KEY_MEDIA_ID),
+            value.getString(MediaMetadata.METADATA_KEY_TITLE), value.getString(MediaMetadata.METADATA_KEY_ARTIST),
+            value.getString(MediaMetadata.METADATA_KEY_ALBUM), value.getLong(MediaMetadata.METADATA_KEY_DURATION),
+            value.getString(MediaMetadata.METADATA_KEY_MEDIA_URI), value.getString("filePath"),
+            value.getRating(MediaMetadata.METADATA_KEY_USER_RATING)?.toString(), state?.let { favorite(context, it) }).toString()
+        if (snapshots[session] == signature) return
+        snapshots[session] = signature
         val time = System.currentTimeMillis()
-        jobs[session] = scope.launch {
-            delay(220)
+        scope.launch {
             if (!RuntimeBridge.settings.recordPreferences || context.packageName !in RuntimeBridge.settings.players) return@launch
             runCatching {
                 val title = value.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty().trim()
@@ -60,10 +67,38 @@ object PreferenceReporter {
                 val files = resolve(context, value, title, artist, album, duration)
                 val observation = PreferenceObservation(context.packageName, value.getString(MediaMetadata.METADATA_KEY_MEDIA_ID).orEmpty(),
                     title, artist, album, duration, favorite, rating, files.singleOrNull(), if(files.size>1)files else emptyList(), time)
-                context.contentResolver.call(ProviderStore.URI, "preference_observe", null, Bundle().apply {
-                    putString("json", ProviderStore.json.encodeToString(observation))
-                })
+                val outbox = context.getSharedPreferences("local_provider_preference_outbox", Context.MODE_PRIVATE)
+                check(outbox.edit().putString("${observation.identity()}:$time", ProviderStore.json.encodeToString(observation)).commit())
+                retryPending(context)
             }.onFailure { android.util.Log.w("LocalProvider", "Preference observation unavailable: ${it.javaClass.simpleName}") }
+        }
+    }
+    /** Journal belongs to the player, so killing the module UI cannot lose an observation. */
+    @Synchronized fun retryPending(context: Context) {
+        if (deliveryJob?.isActive == true) return
+        val app = context.applicationContext
+        deliveryJob = scope.launch {
+            val outbox = app.getSharedPreferences("local_provider_preference_outbox", Context.MODE_PRIVATE)
+            deliverPreferenceOutbox(
+                pending = {
+                    outbox.all.entries.sortedBy { it.key.substringAfterLast(':').toLongOrNull() ?: 0L }
+                        .map { it.key to (it.value as String) }
+                },
+                send = { raw ->
+                    val result = app.contentResolver.call(ProviderStore.URI, "preference_observe", null,
+                        Bundle().apply { putString("json", raw) })
+                    check(result != null)
+                },
+                acknowledge = { key -> check(outbox.edit().remove(key).commit()) },
+                wakeModule = {
+                    val token = android.app.PendingIntent.getBroadcast(app, 0,
+                        android.content.Intent("io.github.proify.lyricon.localprovider.PREFERENCE_SENDER").setPackage(app.packageName),
+                        android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+                    app.sendBroadcast(android.content.Intent().setComponent(android.content.ComponentName(
+                        "io.github.proify.lyricon.localprovider", "io.github.proify.lyricon.localprovider.data.PreferenceWakeReceiver"))
+                        .addFlags(android.content.Intent.FLAG_INCLUDE_STOPPED_PACKAGES).putExtra("sender", token))
+                },
+            )
         }
     }
     private fun favorite(context: Context, state: PlaybackState): Boolean? {

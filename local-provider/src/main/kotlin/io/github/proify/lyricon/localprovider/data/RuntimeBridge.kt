@@ -86,7 +86,12 @@ object RuntimeBridge {
         if (receiver != null) return
         context = app.applicationContext
         onReload = reload
+        runCatching {
+            val cached = app.getSharedPreferences("local_provider_runtime_cache", Context.MODE_PRIVATE).getString("settings", null)
+            if (cached != null) settings = ProviderStore.json.decodeFromString<ProviderSettings>(cached)
+        }
         refresh(false)
+        io.github.proify.lyricon.localprovider.xposed.PreferenceReporter.retryPending(app)
         receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 // A broadcast is only a wake-up signal; the authorized provider owns commands.
@@ -105,6 +110,11 @@ object RuntimeBridge {
             val wasPreviewing = android.os.SystemClock.elapsedRealtime() < previewUntil
             previewUntil = result.getLong("previewUntil")
             settings = next; retryVersion = version
+            app.getSharedPreferences("local_provider_runtime_cache", Context.MODE_PRIVATE).edit()
+                .putString("settings", ProviderStore.json.encodeToString(next)).apply()
+            if (reload && next.recordPreferences && app.packageName in next.players) {
+                io.github.proify.lyricon.localprovider.xposed.PreferenceReporter.retryPending(app)
+            }
             if (reload && !wasPreviewing) lastPlayback?.takeIf { it.track == trackKey(trackMetadata.title, trackMetadata.artist) }?.let(::publishPlayback)
             if (reload && changed) onReload?.invoke()
         }.onFailure { android.util.Log.w("LocalProvider", "Module settings unavailable: ${it.javaClass.simpleName}") }

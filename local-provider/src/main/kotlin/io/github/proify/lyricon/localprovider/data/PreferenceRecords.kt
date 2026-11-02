@@ -89,6 +89,11 @@ class PreferenceRecordStore(private val context: android.content.Context) {
         save(records().map { if (it.id == id) it.copy(file = file.copy(source = "手动确认"),
             revision = maxOf(System.currentTimeMillis(), it.revision + 1), status = "pending", message = "") else it })
     }
+    fun delete(ids: Set<String>) = synchronized(lock) {
+        // Keep the observed baseline: a repeated player snapshot must not recreate deleted work.
+        save(records().map { if (it.id in ids) it.copy(favorite = null, favoriteTime = null,
+            rating = null, status = "pending", message = "") else it })
+    }
     fun applyResult(id: String, revision: Long, success: Boolean, message: String) = synchronized(lock) {
         save(records().map { if (it.id == id && it.revision == revision) it.copy(
             status = if (success) "written" else "failed", message = message.take(400)) else it })

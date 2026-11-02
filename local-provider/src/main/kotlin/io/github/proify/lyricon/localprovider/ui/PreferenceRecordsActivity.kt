@@ -111,6 +111,7 @@ class PreferenceRecordsActivity : AppCompatActivity() {
                     renderRows()
                 }
             };addView(selectAll)
+            addView(button("删除记录",false) { confirmDelete(store.records().filter { it.hasChanges }.map { it.id }.toSet()) })
         })
         rows=column();body.addView(rows)
         root.addView(ScrollView(this).apply {addView(body)},LinearLayout.LayoutParams(-1,0,1f))
@@ -160,10 +161,20 @@ class PreferenceRecordsActivity : AppCompatActivity() {
                 else addView(button(if(r.candidates.size>1)"找到 ${r.candidates.size} 个文件 · 确认文件" else "确认歌曲文件",false) { choose(r) },full(7))
                 addView(text("${playerName(r.player)} · ${r.file?.source ?: "路径待确认"} · ${SimpleDateFormat("MM-dd HH:mm:ss",Locale.ROOT).format(Date(r.updatedAt))}",11,palette.muted),full(6))
                 if(r.message.isNotBlank()) addView(text(r.message,12,palette.muted),full(5))
+                addView(button("删除此记录",false) { confirmDelete(setOf(r.id)) }.apply { isEnabled = !writing },full(6))
                 setOnLongClickListener {details(r);true}
             },full(0,10))
         }
         updateCount()
+    }
+    private fun confirmDelete(ids: Set<String>) {
+        if (writing || ids.isEmpty()) return
+        val targets = selected.intersect(ids).ifEmpty { ids }
+        ProviderDialogBuilder(this).setTitle("删除 ${targets.size} 条记录？")
+            .setMessage("仅删除操作记录，歌曲文件和已写入的标签保持原样。")
+            .setNegativeButton("取消",null).setPositiveButton("删除") { _,_ ->
+                store.delete(targets); selected.removeAll(targets); renderRows()
+            }.show()
     }
     private fun updateCount(){
         val pending=store.records().count {it.hasChanges&&!it.ready}
