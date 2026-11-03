@@ -7,6 +7,8 @@
     package="io.github.proify.lyricon.localprovider">
     <uses-permission android:name="android.permission.INTERNET" />
     <queries>
+        <package android:name="io.github.proify.lyricon" />
+        <package android:name="com.android.systemui" />
         <package android:name="com.lonx.lyrico" />
         <package android:name="com.lonx.lyrico.debug" />
         <package android:name="org.lsposed.manager" />

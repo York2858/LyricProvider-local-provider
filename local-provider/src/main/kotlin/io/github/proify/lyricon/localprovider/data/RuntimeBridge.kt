@@ -18,6 +18,7 @@ object RuntimeBridge {
     @Volatile private var artworkMetadata: android.media.MediaMetadata? = null
     @Volatile private var lastAudioPath: String? = null
     private var artworkJob: kotlinx.coroutines.Job? = null
+    private var recoveryJob: kotlinx.coroutines.Job? = null
     private var publishedArtwork: Pair<String, String>? = null
     @Synchronized fun captureArtwork(metadata: android.media.MediaMetadata) {
         artworkMetadata = metadata
@@ -49,6 +50,7 @@ object RuntimeBridge {
     private var receiver: BroadcastReceiver? = null
     private var onReload: (() -> Unit)? = null
     @Volatile private var trackMetadata = io.github.proify.lyricon.localprovider.search.MatchTarget()
+    fun currentTrackMetadata() = trackMetadata
     fun setTrackMetadata(title: String?, artist: String?, album: String?, duration: Long) {
         if (trackKey(trackMetadata.title, trackMetadata.artist) != trackKey(title, artist)) {
             lastAudioPath = null; publishedArtwork = null
@@ -85,13 +87,13 @@ object RuntimeBridge {
     fun initialize(app: Context, reload: () -> Unit) {
         if (receiver != null) return
         context = app.applicationContext
+        io.github.proify.lyricon.localprovider.xposed.PlayerFavoriteReceiver.initialize(app.applicationContext)
         onReload = reload
         runCatching {
             val cached = app.getSharedPreferences("local_provider_runtime_cache", Context.MODE_PRIVATE).getString("settings", null)
             if (cached != null) settings = ProviderStore.json.decodeFromString<ProviderSettings>(cached)
         }
         refresh(false)
-        io.github.proify.lyricon.localprovider.xposed.PreferenceReporter.retryPending(app)
         receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 // A broadcast is only a wake-up signal; the authorized provider owns commands.
@@ -103,29 +105,45 @@ object RuntimeBridge {
     @Synchronized private fun refresh(reload: Boolean) {
         val app = context ?: return
         runCatching {
-            val result = app.contentResolver.call(ProviderStore.URI, "config", null, null) ?: return
-            val next = ProviderStore.json.decodeFromString<ProviderSettings>(result.getString("json") ?: return)
-            val version = result.getLong("retry")
-            val changed = next.revision != settings.revision || version != retryVersion
-            val wasPreviewing = android.os.SystemClock.elapsedRealtime() < previewUntil
-            previewUntil = result.getLong("previewUntil")
-            settings = next; retryVersion = version
-            app.getSharedPreferences("local_provider_runtime_cache", Context.MODE_PRIVATE).edit()
-                .putString("settings", ProviderStore.json.encodeToString(next)).apply()
-            if (reload && next.recordPreferences && app.packageName in next.players) {
-                io.github.proify.lyricon.localprovider.xposed.PreferenceReporter.retryPending(app)
+            val result = app.contentResolver.call(ProviderStore.URI, "config", null, null) ?: error("Module settings unavailable")
+            applyConfig(app, result, reload)
+        }.onFailure {
+            android.util.Log.w("LocalProvider", "Module settings unavailable: ${it.javaClass.simpleName}")
+            if (recoveryJob?.isActive != true) recoveryJob = scope.launch {
+                runCatching { applyConfig(app, ModuleConnection.call(app, "config"), true) }
             }
-            if (reload && !wasPreviewing) lastPlayback?.takeIf { it.track == trackKey(trackMetadata.title, trackMetadata.artist) }?.let(::publishPlayback)
-            if (reload && changed) onReload?.invoke()
-        }.onFailure { android.util.Log.w("LocalProvider", "Module settings unavailable: ${it.javaClass.simpleName}") }
+        }
     }
-    fun find(title: String?, artist: String?, path: String?): Pair<Song, Boolean>? = runCatching {
-        val result = context?.contentResolver?.call(ProviderStore.URI, "find", null, Bundle().apply {
+
+    @Synchronized private fun applyConfig(app: Context, result: Bundle, reload: Boolean) {
+        val next = ProviderStore.json.decodeFromString<ProviderSettings>(result.getString("json") ?: return)
+        val version = result.getLong("retry")
+        val changed = next.revision != settings.revision || version != retryVersion
+        val wasPreviewing = android.os.SystemClock.elapsedRealtime() < previewUntil
+        previewUntil = result.getLong("previewUntil")
+        settings = next; retryVersion = version
+        result.getString("favorite_seeds")?.let { raw ->
+            val journal = io.github.proify.lyricon.localprovider.xposed.PlayerFavoriteJournal(app)
+            ProviderStore.json.decodeFromString<List<PreferenceObservation>>(raw).filter { it.player == app.packageName }
+                .forEach { value -> value.favorite?.let { journal.write(value, it, seed = true) } }
+        }
+        app.getSharedPreferences("local_provider_runtime_cache", Context.MODE_PRIVATE).edit()
+            .putString("settings", ProviderStore.json.encodeToString(next)).apply()
+        if (reload && !wasPreviewing) lastPlayback?.takeIf { it.track == trackKey(trackMetadata.title, trackMetadata.artist) }?.let(::publishPlayback)
+        if (reload && changed) onReload?.invoke()
+    }
+    suspend fun find(title: String?, artist: String?, path: String?): Pair<Song, Boolean>? = runCatching {
+        val app = context ?: return null
+        val result = ModuleConnection.call(app, "find", Bundle().apply {
             putString("title", title); putString("artist", artist); putString("path", path)
-        }) ?: return null
+        })
         val song = ProviderStore.json.decodeFromString<Song>(result.getString("song") ?: return null)
         song to result.getBoolean("manual")
-    }.getOrNull()
+    }.getOrElse {
+        if (it is kotlinx.coroutines.CancellationException) throw it
+        android.util.Log.w("LocalProvider", "Directory lyrics unavailable: ${it.javaClass.simpleName}")
+        null
+    }
     fun report(song: Song?, source: String, path: String?, message: String, error: Boolean = false) {
         val app = context ?: return
         lastAudioPath = path
@@ -136,7 +154,7 @@ object RuntimeBridge {
         scope.launch {
             runCatching {
                 val raw = ProviderStore.json.encodeToString(report)
-                if (raw.length <= 380_000) app.contentResolver.call(ProviderStore.URI, "report", null,
+                if (raw.length <= 380_000) ModuleConnection.call(app, "report",
                     Bundle().apply { putString("json", raw) })
                 artworkMetadata?.let(::publishArtwork)
             }.onFailure { android.util.Log.w("LocalProvider", "Runtime report unavailable: ${it.javaClass.simpleName}") }

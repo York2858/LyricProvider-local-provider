@@ -13,13 +13,14 @@ import io.github.proify.lyricon.localprovider.data.*
 import io.github.proify.lyricon.localprovider.ui.PreferenceRecordsActivity
 import io.github.proify.lyricon.localprovider.xposed.PreferenceReporter
 import kotlinx.serialization.encodeToString
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 
 class PreferenceRecordsIntegrationTest {
     private val inst get()=InstrumentationRegistry.getInstrumentation()
     private val context get()=inst.targetContext
-    private fun await(check:()->Boolean){val deadline=System.currentTimeMillis()+10000;while(!check()){assertTrue("Timed out",System.currentTimeMillis()<deadline);Thread.sleep(100)}}
+    private fun await(check:()->Boolean){val deadline=System.currentTimeMillis()+10000;while(!check()){runBlocking { PlayerPreferenceClient.collectPlayer(context, context.packageName) };assertTrue("Timed out",System.currentTimeMillis()<deadline);Thread.sleep(100)}}
     @Test fun capturesRatingClearsAndPreservesPendingWorkAcrossLateResults() {
         val settings=ProviderStore(context)
         val old=settings.settings()
@@ -90,14 +91,14 @@ class PreferenceRecordsIntegrationTest {
         }
     }
 
-    @Test fun reconnectDeliversRetainedOutboxWithoutANewPlaybackEvent() {
+    @Test fun managementPageCollectsRetainedOutboxWithoutANewPlaybackEvent() {
         val settings = ProviderStore(context)
         val oldSettings = settings.settings()
         val prefs = context.getSharedPreferences("playback_preferences",0)
         val oldRecords = prefs.getString("records",null)
         val oldEnabled = prefs.getBoolean("enabled",true)
         val outbox = context.getSharedPreferences("local_provider_preference_outbox",0)
-        val oldOutbox = outbox.all.mapValues { it.value as String }
+        val oldOutbox = outbox.all.toMap()
         try {
             prefs.edit().remove("records").putBoolean("enabled",true).commit()
             settings.update { it.copy(players=it.players+context.packageName) }
@@ -106,8 +107,10 @@ class PreferenceRecordsIntegrationTest {
             val observation = PreferenceObservation(context.packageName,"retained-fixture","Retained delivery fixture",rating=100)
             val key = "${observation.identity()}:${observation.observedAt}"
             outbox.edit().clear().putString(key,ProviderStore.json.encodeToString(observation)).commit()
-            // Opening the module reconnects players using the same refresh signal.
             settings.connectPlayers()
+            Thread.sleep(300)
+            assertFalse(PreferenceRecordStore(context).records().any { it.id==observation.identity() })
+            runBlocking { PlayerPreferenceClient.collectPlayer(context, context.packageName) }
             await { PreferenceRecordStore(context).records().any { it.id==observation.identity() && it.rating==100 } }
             await { !outbox.contains(key) }
         } finally {
@@ -115,7 +118,12 @@ class PreferenceRecordsIntegrationTest {
             prefs.edit().putBoolean("enabled",oldEnabled).apply {
                 if(oldRecords==null)remove("records") else putString("records",oldRecords)
             }.commit()
-            outbox.edit().clear().apply { oldOutbox.forEach { (key,value) -> putString(key,value) } }.commit()
+            outbox.edit().clear().apply { oldOutbox.forEach { (key,value) -> when(value) {
+                is String -> putString(key,value)
+                is Long -> putLong(key,value)
+                is Int -> putInt(key,value)
+                is Boolean -> putBoolean(key,value)
+            } } }.commit()
         }
     }
 

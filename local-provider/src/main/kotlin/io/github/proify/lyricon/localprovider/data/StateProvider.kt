@@ -17,6 +17,12 @@ class StateProvider : ContentProvider() {
         val store = ProviderStore(app)
         val own = Binder.getCallingUid() == Process.myUid()
         val packages = app.packageManager.getPackagesForUid(Binder.getCallingUid()).orEmpty().toSet()
+        if (method == "immersive_favorite") {
+            if (!own && packages.none { it == "io.github.proify.lyricon" || it == "com.android.systemui" }) {
+                throw SecurityException("Only Lyricon may record immersive favorites")
+            }
+            return ImmersiveFavoriteStore(app).call(requireNotNull(extras))
+        }
         val trusted = packages.intersect(if (method == "config") store.settings().knownPlayers else store.settings().players)
         if (!own && trusted.isEmpty()) throw SecurityException("Player has not been enabled")
         return when (method) {
@@ -26,7 +32,10 @@ class StateProvider : ContentProvider() {
                 val observation = ProviderStore.json.decodeFromString<PreferenceObservation>(raw)
                 require(own || observation.player in trusted)
                 require(observation.title.length <= 2000 && observation.candidates.size <= 30)
-                PreferenceRecordStore(app).observe(observation)
+                if (observation.fromLyrics) {
+                    requireNotNull(observation.favorite)
+                    PreferenceRecordStore(app).setImmersiveFavorite(observation, observation.favorite)
+                } else PreferenceRecordStore(app).observe(observation)
                 Bundle.EMPTY
             }
             "playback" -> {
@@ -50,6 +59,11 @@ class StateProvider : ContentProvider() {
                 putString("json", ProviderStore.json.encodeToString(store.settings()))
                 putLong("retry", store.retryVersion())
                 putLong("previewUntil", store.previewUntil())
+                val seeds = PreferenceRecordStore(app).records().filter { it.player in packages && (it.favorite ?: it.lastFavorite) != null }
+                    .take(500).map { PreferenceObservation(it.player, it.mediaId, it.title, it.artist, it.album, it.duration,
+                        favorite = it.favorite ?: it.lastFavorite) }
+                val raw = ProviderStore.json.encodeToString(seeds)
+                if (raw.toByteArray().size <= 180_000) putString("favorite_seeds", raw)
             }
             "report" -> {
                 val raw = extras?.getString("json").orEmpty()

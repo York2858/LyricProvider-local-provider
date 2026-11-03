@@ -27,6 +27,7 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.*
 
 /** Durable, manual hand-off: capture never writes audio files. */
 class PreferenceRecordsActivity : AppCompatActivity() {
@@ -39,6 +40,8 @@ class PreferenceRecordsActivity : AppCompatActivity() {
     private var updatingSelection=false
     private var pickingId: String? = null
     private var writing = false
+    private var collectionJob: Job? = null
+    private val collectionScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val palette get() = ProviderTheme.colors(this)
     private val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) { renderRows() }
@@ -128,8 +131,14 @@ class PreferenceRecordsActivity : AppCompatActivity() {
         }
         renderRows()
     }
-    override fun onStart(){super.onStart();contentResolver.registerContentObserver(ProviderStore.URI,true,observer);renderRows()}
-    override fun onStop(){contentResolver.unregisterContentObserver(observer);super.onStop()}
+    override fun onStart(){
+        super.onStart();contentResolver.registerContentObserver(ProviderStore.URI,true,observer);renderRows()
+        collectionJob = collectionScope.launch {
+            while (isActive) { PlayerPreferenceClient.collect(this@PreferenceRecordsActivity); delay(2000) }
+        }
+    }
+    override fun onStop(){collectionJob?.cancel();collectionJob=null;contentResolver.unregisterContentObserver(observer);super.onStop()}
+    override fun onDestroy(){collectionScope.cancel();super.onDestroy()}
     override fun onSaveInstanceState(outState: Bundle){outState.putStringArrayList("selected",ArrayList(selected));outState.putString("picking",pickingId);outState.putBoolean("writing",writing);super.onSaveInstanceState(outState)}
     private fun renderRows() {
         if(!::rows.isInitialized)return

@@ -14,7 +14,7 @@ class PreferenceWakeReceiver : BroadcastReceiver() {
         sender ?: return
         val enabled = ProviderStore(context).settings().players
         val packages = context.packageManager.getPackagesForUid(sender.creatorUid).orEmpty()
-        if (packages.none { it in enabled }) return
+        if (packages.none { it in enabled || it == "io.github.proify.lyricon" || it == "com.android.systemui" }) return
         // Starting this process is sufficient; the player's durable outbox retries the provider call.
     }
 }

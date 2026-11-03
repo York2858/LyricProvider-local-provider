@@ -15,6 +15,7 @@ data class PreferenceObservation(
     val album: String = "", val duration: Long = 0, val favorite: Boolean? = null,
     val rating: Int? = null, val file: PreferenceFile? = null,
     val candidates: List<PreferenceFile> = emptyList(), val observedAt: Long = System.currentTimeMillis(),
+    val fromLyrics: Boolean = false,
 ) {
     fun identity(): String {
         val key = listOf(player, mediaId, title.trim(), artist.trim(), album.trim(), if(mediaId.isBlank())duration.toString()else "")
@@ -73,6 +74,56 @@ class PreferenceRecordStore(private val context: android.content.Context) {
         ProviderStore.json.decodeFromString<List<PreferenceRecord>>(prefs.getString("records", "[]")!!)
     }.getOrDefault(emptyList())
     fun enabled() = prefs.getBoolean("enabled", true)
+    fun immersiveRecord(value: PreferenceObservation): PreferenceRecord? {
+        val all = records()
+        return all.firstOrNull { it.id == value.identity() } ?: all.filter {
+            it.player == value.player && it.title.trim() == value.title.trim() && it.artist.trim() == value.artist.trim() &&
+                it.album.trim() == value.album.trim() && (value.mediaId.isBlank() || it.mediaId.isBlank())
+        }.singleOrNull()
+    }
+    fun setImmersiveFavorite(value: PreferenceObservation, favorite: Boolean) = synchronized(lock) {
+        check(enabled()) { "收藏与评分记录已关闭" }
+        val old = immersiveRecord(value)
+        if (old?.favorite == favorite) return@synchronized
+        val next = manualFavorite(old, value, favorite)
+        save((listOf(next) + records().filterNot { it.id == next.id }).sortedByDescending { it.updatedAt })
+    }
+
+    fun importPlayerBatch(player: String, journalId: String, events: List<Pair<Long, PreferenceObservation>>) = synchronized(lock) {
+        check(enabled()) { "收藏与评分记录已关闭" }
+        require(player.isNotBlank() && player.length <= 300 && journalId.matches(Regex("[a-fA-F0-9-]{36}")))
+        require(events.size <= 50 && events.zipWithNext().all { it.first.first < it.second.first })
+        val cursorKey = "player_cursor:$player:$journalId"
+        val cursor = prefs.getLong(cursorKey, 0)
+        val all = records().associateBy { it.id }.toMutableMap()
+        events.filter { it.first > cursor }.forEach { (sequence, value) ->
+            require(sequence > 0 && value.player == player && value.title.isNotBlank() && value.title.length <= 2000 &&
+                value.candidates.size <= 30 && (value.rating == null || value.rating in 0..100))
+            val old = all[value.identity()] ?: if (value.fromLyrics) all.values.filter {
+                it.player == player && it.title.trim() == value.title.trim() && it.artist.trim() == value.artist.trim() &&
+                    it.album.trim() == value.album.trim() && (value.mediaId.isBlank() || it.mediaId.isBlank())
+            }.singleOrNull() else null
+            val next = if (value.fromLyrics) manualFavorite(old, value, requireNotNull(value.favorite))
+                else PreferenceRecordReducer.merge(old, value)
+            all[next.id] = next
+        }
+        val updated = all.values.sortedByDescending { it.updatedAt }.let { list ->
+            list.filter { it.hasChanges && it.status != "written" } + list.filter { !it.hasChanges || it.status == "written" }.take(1000)
+        }
+        val through = events.lastOrNull()?.first ?: cursor
+        check(prefs.edit().putString("records", ProviderStore.json.encodeToString(updated))
+            .putLong(cursorKey, maxOf(cursor, through)).commit()) { "收藏与评分汇总保存失败" }
+        context.contentResolver.notifyChange(ProviderStore.URI.buildUpon().appendPath("preferences").build(), null)
+    }
+
+    private fun manualFavorite(old: PreferenceRecord?, value: PreferenceObservation, favorite: Boolean): PreferenceRecord {
+        if (old?.favorite == favorite) return old
+        val baseline = old ?: PreferenceRecordReducer.merge(null, value.copy(favorite = null, rating = null))
+        val now = value.observedAt.coerceAtMost(System.currentTimeMillis())
+        return baseline.copy(favorite = favorite,
+            favoriteTime = if (favorite) SimpleDateFormat("yyyy-MM-ddHH:mm:ss", Locale.ROOT).format(Date(now)) else null,
+            revision = maxOf(now, baseline.revision + 1), updatedAt = now, status = "pending", message = "")
+    }
     fun setEnabled(enabled: Boolean) { prefs.edit().putBoolean("enabled", enabled).commit(); ProviderStore(context).requestRetry() }
     fun observe(value: PreferenceObservation) = synchronized(lock) {
         if (!enabled()) return@synchronized
