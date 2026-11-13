@@ -150,7 +150,7 @@ class MainActivity : AppCompatActivity() {
                 return
             }
             if (page == "detail") { previewRuntime = store.snapshot(); restartPreviewTick() }
-            if (page in setOf("home", "logs", "diagnosis", "players")) render()
+            if (page in setOf("home", "logs", "diagnosis")) render()
             else if (page == "search") {
                 val snapshot = store.snapshot()
                 content.findViewWithTag<View>("playing:${trackKey(snapshot.song?.name, snapshot.song?.artist)}")
@@ -347,7 +347,8 @@ class MainActivity : AppCompatActivity() {
                 addView(row().apply {
                     val capabilities=ProviderSongMetadata.capabilities(song)
                     if(capabilities.isNotEmpty()) addView(ProviderSongMetadata.features(this@MainActivity,capabilities),LinearLayout.LayoutParams(-2,-2).apply { marginEnd=dp(5) })
-                    if(current.source.isNotBlank()) addView(ProviderSongMetadata.source(this@MainActivity,sourceLabel(current.source)),LinearLayout.LayoutParams(-2,-2))
+                    val sourceText = current.source.ifBlank { current.message }.let(::sourceLabel)
+                    if(sourceText.isNotBlank()) addView(ProviderSongMetadata.source(this@MainActivity,sourceText),LinearLayout.LayoutParams(-2,-2))
                 },full(9))
             },LinearLayout.LayoutParams(0,-2,1f))
         },full(0,12))
@@ -1194,7 +1195,7 @@ class MainActivity : AppCompatActivity() {
         card {
             addView(text(value.message, 15))
             addView(text("播放器：${playerName(value.player)}", 13, muted), full(12))
-            addView(text("来源：${sourceLabel(value.source).ifBlank { "尚未命中" }}", 13, muted), full(6))
+            addView(text("来源：${sourceLabel(value.source).ifBlank { value.message }}", 13, muted), full(6))
             value.path?.let { addView(text("音乐：$it", 12, muted), full(6)) }
             if (song != null) { space(this, 15); addView(badges(song)) }
             addView(text("更新时间：${formatDate(value.updatedAt)}", 12, muted), full(13))
@@ -1236,23 +1237,44 @@ class MainActivity : AppCompatActivity() {
             box.addView(text("请确认插件作用域已勾选，并关闭播放器自带的词幕输出，避免来源冲突。", 12, muted), full(9))
         box.addView(action("重新核对", false) { receiver.stop(); receiver.start(); updateReceiverSection() }, full(8))
     }
+    private data class PlayerApp(val pkg: String, val name: String, val icon: android.graphics.drawable.Drawable?)
+    private var playerApps: List<PlayerApp>? = null
+    private var playerAppsKey: Set<String> = emptySet()
+    private var playerAppsJob: Job? = null
     private fun players() {
-        val s = store.settings(); val current = store.snapshot()
-        s.knownPlayers.sortedBy { playerName(it) }.forEach { pkg ->
-            val installed = runCatching { packageManager.getApplicationInfo(pkg, 0) }.isSuccess
-            if (installed || pkg in s.players && pkg !in ProviderSettings.DEFAULT_PLAYERS) card {
-                addView(toggle(playerName(pkg), if (current.player == pkg) "最近接入 ${formatDate(current.updatedAt)}" else "等待播放器接入", pkg in s.players) { enabled ->
-                    update { it.copy(players = if (enabled) it.players + pkg else it.players - pkg) }
+        val settings = store.settings()
+        val key = settings.knownPlayers + settings.players
+        if (playerAppsKey != key) { playerApps = null; playerAppsKey = key; playerAppsJob?.cancel() }
+        val apps = playerApps
+        if (apps == null) {
+            content.addView(text("正在读取播放器…",13,muted),full(12))
+            if (playerAppsJob?.isActive != true) playerAppsJob = searchScope.launch {
+                val loaded = withContext(Dispatchers.IO) {
+                    key.mapNotNull { pkg ->
+                        val info = runCatching { packageManager.getApplicationInfo(pkg,0) }.getOrNull()
+                        if (info == null && !(pkg in settings.players && pkg !in ProviderSettings.DEFAULT_PLAYERS)) null
+                        else PlayerApp(pkg, info?.let { runCatching { packageManager.getApplicationLabel(it).toString() }.getOrDefault(pkg) } ?: pkg,
+                            info?.let { runCatching { packageManager.getApplicationIcon(it) }.getOrNull() })
+                    }.sortedBy { it.name }
+                }
+                if (playerAppsKey == key) { playerApps = loaded; if (page == "players") render() }
+            }
+        } else {
+            val current = store.snapshot()
+            apps.forEach { app -> card {
+                addView(toggle(app.name, if(current.player == app.pkg) "最近接入 ${formatDate(current.updatedAt)}" else "等待播放器接入",app.pkg in settings.players) { enabled ->
+                    searchScope.launch {
+                        withContext(Dispatchers.IO) { update { it.copy(players = if(enabled) it.players + app.pkg else it.players - app.pkg) } }
+                    }
                 }.apply {
-                    contentDescription="${playerName(pkg)}，$pkg"
+                    contentDescription="${app.name}，${app.pkg}"
                     addView(ImageView(this@MainActivity).apply {
                         tag="playerIcon"; background=ProviderGlass.solid(this@MainActivity,tint,8,false); clipToOutline=true
-                        val appIcon=runCatching { packageManager.getApplicationIcon(pkg) }.getOrNull()
-                        if(appIcon==null) { setImageDrawable(ProviderIcon("player",ink)); setPadding(dp(7),dp(7),dp(7),dp(7)) }
-                        else setImageDrawable(appIcon)
+                        if(app.icon == null) { setImageDrawable(ProviderIcon("player",ink)); setPadding(dp(7),dp(7),dp(7),dp(7)) }
+                        else setImageDrawable(app.icon)
                     },0,LinearLayout.LayoutParams(dp(36),dp(36)).apply { marginEnd=dp(12) })
                 })
-            }
+            } }
         }
         content.addView(action("添加其他播放器", false) { addPlayer() }, full(10))
         content.addView(action("管理模块作用域", true) { openModuleManager() }, full(8))

@@ -49,6 +49,39 @@ class ProviderPageTest {
             onView(withText("字段权重")).check(matches(isDisplayed()))
         } finally { instrument.runOnMainSync { activity.finish() } }
     }
+    @Test fun playerCardsStayAttachedDuringRuntimeUpdates() {
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        val context = instrument.targetContext
+        val activity = launchTestActivity()
+        try {
+            instrument.runOnMainSync {
+                MainActivity::class.java.getDeclaredMethod("open",String::class.java).apply { isAccessible=true }.invoke(activity,"players")
+            }
+            val field = MainActivity::class.java.getDeclaredField("playerApps").apply { isAccessible=true }
+            val deadline=android.os.SystemClock.elapsedRealtime()+10000
+            while (true) {
+                var loaded=false
+                instrument.runOnMainSync { loaded=field.get(activity)!=null }
+                if(loaded) break
+                assertTrue("Player metadata load timed out",android.os.SystemClock.elapsedRealtime()<deadline)
+                Thread.sleep(50)
+            }
+            instrument.waitForIdleSync()
+            val contentField=MainActivity::class.java.getDeclaredField("content").apply { isAccessible=true }
+            lateinit var first: android.view.View
+            instrument.runOnMainSync {
+                first=(contentField.get(activity) as android.widget.LinearLayout).getChildAt(0)
+            }
+            repeat(20) { context.contentResolver.notifyChange(ProviderStore.URI,null) }
+            instrument.waitForIdleSync()
+            instrument.runOnMainSync {
+                assertSame("Runtime updates must not rebuild player controls",first,
+                    (contentField.get(activity) as android.widget.LinearLayout).getChildAt(0))
+            }
+            onView(withText("管理模块作用域")).check(matches(isDisplayed()))
+        } finally { instrument.runOnMainSync { activity.finish() } }
+    }
+
     @Test fun moduleCanReadConfigThroughTheSameApiUsedByHookedPlayers() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val result = context.contentResolver.call(ProviderStore.URI, "config", null, null)!!

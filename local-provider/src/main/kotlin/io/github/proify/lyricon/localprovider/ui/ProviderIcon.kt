@@ -52,6 +52,15 @@ class ProviderIcon(private val name: String, color: Int) : Drawable() {
             "upload" -> { path(12f,16f,12f,3f); path(7f,8f,12f,3f,17f,8f); path(3f,14f,3f,21f,21f,21f,21f,14f) }
             "close" -> { path(6f,6f,18f,18f); path(18f,6f,6f,18f) }
             "locate" -> { canvas.drawCircle(12f,10f,3f,paint); canvas.drawOval(5f,3f,19f,17f,paint); path(6f,14f,12f,22f,18f,14f) }
+            "more" -> {canvas.drawCircle(5f,12f,1f,paint);canvas.drawCircle(12f,12f,1f,paint);canvas.drawCircle(19f,12f,1f,paint)}
+            "heart" -> {
+                val heart=Path().apply {
+                    moveTo(12f,21f);cubicTo(8f,17f,2f,13f,2f,7.5f)
+                    cubicTo(2f,2f,9f,1f,12f,6f);cubicTo(15f,1f,22f,2f,22f,7.5f)
+                    cubicTo(22f,13f,16f,17f,12f,21f);close()
+                }
+                canvas.drawPath(heart,paint)
+            }
             "folder" -> path(3f,7f,3f,20f,21f,20f,21f,7f,12f,7f,10f,4f,3f,4f,3f,7f)
             "music" -> { path(9f,17f,9f,5f,20f,3f,20f,15f); canvas.drawOval(3f,15f,9f,20f,paint); canvas.drawOval(14f,13f,20f,18f,paint) }
             "history" -> { canvas.drawArc(4f,4f,21f,21f,-130f,300f,false,paint); path(3f,3f,3f,9f,9f,9f); path(12f,8f,12f,13f,16f,15f) }

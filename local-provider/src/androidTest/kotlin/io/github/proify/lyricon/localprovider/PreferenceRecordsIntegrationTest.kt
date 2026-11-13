@@ -137,8 +137,8 @@ class PreferenceRecordsIntegrationTest {
             store.observe(PreferenceObservation("com.neutroncode.mp","handoff","Hand-off fixture",rating=60,
                 file=PreferenceFile("/storage/emulated/0/Music/not-found-fixture.flac",source="播放器直接提供")))
             activity=inst.startActivitySync(Intent(context,PreferenceRecordsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            onView(withText("全选可写入")).perform(click())
-            onView(withText("调用 Lyrico 写入标签")).perform(click())
+            onView(withText("全选")).perform(click())
+            onView(withContentDescription("调用 Lyrico 写入标签")).perform(click())
             onView(withText("写入预览 · 1 首")).check(matches(isDisplayed()))
             onView(withText("交给 Lyrico 写入")).perform(click())
             // Lyrico may first request legacy storage permissions on a fresh install.
@@ -161,6 +161,7 @@ class PreferenceRecordsIntegrationTest {
             store.observe(PreferenceObservation("com.neutroncode.mp","delete-fixture","Delete fixture",rating=100,
                 file=PreferenceFile(path=file.path,source="手动确认")))
             activity=inst.startActivitySync(Intent(context,PreferenceRecordsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            onView(withText("Delete fixture")).perform(click())
             onView(withText("删除此记录")).perform(click())
             onView(withText("删除")).perform(click())
             await { store.records().none { it.hasChanges } }
@@ -192,8 +193,8 @@ class PreferenceRecordsIntegrationTest {
                 file=PreferenceFile(uri=uri.toString(),source="手动确认")))
             val original=store.records().single()
             activity=inst.startActivitySync(Intent(context,PreferenceRecordsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            onView(withText("全选可写入")).perform(click())
-            onView(withText("调用 Lyrico 写入标签")).perform(click())
+            onView(withText("全选")).perform(click())
+            onView(withContentDescription("调用 Lyrico 写入标签")).perform(click())
             onView(withText("交给 Lyrico 写入")).perform(click())
             await{store.records().single().status!="pending"}
             assertEquals(store.records().single().message,"written",store.records().single().status)

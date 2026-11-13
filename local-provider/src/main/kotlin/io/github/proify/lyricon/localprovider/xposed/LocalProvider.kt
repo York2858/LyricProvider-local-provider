@@ -9,6 +9,7 @@ package io.github.proify.lyricon.localprovider.xposed
 import io.github.proify.lyricon.localprovider.lyrics.LyricTiming
 import android.content.Context
 import android.media.MediaMetadata
+import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Environment
@@ -73,10 +74,11 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
             if (context.packageName !in RuntimeBridge.settings.players) {
                 DownloadManager.cancel()
                 provider?.unregister()
+                if (context.packageName == Constants.NEUTRON_PLAYER_PACKAGE) NeutronLyricPublisher.clear()
             } else {
                 provider?.register()
                 lastMediaSignature = null
-                lastMetadata?.let(::handleMetadata)
+                lastMetadata?.let { handleMetadata(it) }
             }
         }
 
@@ -128,14 +130,30 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
                 name = "setMetadata"
                 parameters("android.media.MediaMetadata")
             }.hook {
+                before {
+                    if (appContext?.packageName != Constants.NEUTRON_PLAYER_PACKAGE ||
+                        Constants.NEUTRON_PLAYER_PACKAGE !in RuntimeBridge.settings.players ||
+                        NeutronLyricPublisher.isWritingMetadata()
+                    ) return@before
+                    runCatching {
+                        val session = instance as? MediaSession ?: return@runCatching
+                        val metadata = args[0] as? MediaMetadata
+                        val updated = NeutronLyricPublisher.prepare(session, metadata)
+                        if (updated !== metadata) args[0] = updated
+                    }.onFailure(NeutronLyricPublisher::logFailure)
+                }
                 after {
+                    if (appContext?.packageName == Constants.NEUTRON_PLAYER_PACKAGE &&
+                        NeutronLyricPublisher.isWritingMetadata()
+                    ) return@after
                     runCatching {
                         val metadata = args[0] as? MediaMetadata ?: return@runCatching
-                        (instance as? android.media.session.MediaSession)?.let { session ->
+                        val session = instance as? MediaSession
+                        session?.let {
                             appContext?.let { PreferenceReporter.metadata(it, session, metadata) }
                         }
-                        handleMetadata(metadata)
-                        (instance as? android.media.session.MediaSession)?.controller?.playbackState?.let(RuntimeBridge::reportPlayback)
+                        handleMetadata(metadata, session)
+                        session?.controller?.playbackState?.let(RuntimeBridge::reportPlayback)
                     }.onFailure { error ->
                         YLog.error(tag = TAG, msg = "Failed to handle metadata callback", e = error)
                     }
@@ -144,13 +162,16 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
         }
     }
 
-    private fun handleMetadata(metadata: MediaMetadata) {
+    private fun handleMetadata(metadata: MediaMetadata, session: MediaSession? = null) {
         lastMetadata = metadata
         if (appContext?.packageName !in RuntimeBridge.settings.players) return
         if (processName == POWERAMP_PACKAGE) {
             // YLog.debug(tag = TAG, msg = "Skip PowerAmp processing, handled by PowerAmp hook")
             return
         }
+        val neutronRequest = if (appContext?.packageName == Constants.NEUTRON_PLAYER_PACKAGE) {
+            NeutronLyricPublisher.capture(session, metadata)
+        } else null
 
         val id = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
         val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
@@ -191,7 +212,7 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
         )
 
         DownloadManager.cancel()
-        DownloadManager.search(this@LocalProvider) {
+        DownloadManager.search(downloadCallback(neutronRequest)) {
             trackName = title
             artistName = artist
             albumName = album
@@ -210,7 +231,8 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
                 title = title,
                 artist = artist,
                 album = album,
-                duration = duration
+                duration = duration,
+                neutronRequest = neutronRequest
             )
         }
     }
@@ -320,7 +342,8 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
         title: String?,
         artist: String?,
         album: String?,
-        duration: Long
+        duration: Long,
+        neutronRequest: NeutronLyricPublisher.Request?
     ) {
         if (title.isNullOrBlank()) {
             YLog.warn(tag = TAG, msg = "Skip local path retry because title is blank")
@@ -345,7 +368,7 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
 
                 YLog.warn(tag = TAG, msg = "Resolved audio path on retry, rerunning local/embedded search: $retryPath")
                 DownloadManager.cancel()
-                DownloadManager.search(this@LocalProvider) {
+                DownloadManager.search(downloadCallback(neutronRequest)) {
                     trackName = title
                     artistName = artist
                     albumName = album
@@ -362,7 +385,19 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
         }
     }
 
-    override fun onDownloadFinished(response: List<ProviderLyrics>) {
+    private fun downloadCallback(request: NeutronLyricPublisher.Request?): DownloadCallback =
+        if (request == null) this else object : DownloadCallback by this {
+            override fun onDownloadFinished(response: List<ProviderLyrics>) =
+                handleDownloadFinished(response, request)
+        }
+
+    override fun onDownloadFinished(response: List<ProviderLyrics>) =
+        handleDownloadFinished(response, null)
+
+    private fun handleDownloadFinished(
+        response: List<ProviderLyrics>,
+        neutronRequest: NeutronLyricPublisher.Request?
+    ) {
         val firstResult = response.firstOrNull()
         val source = firstResult?.provider?.id ?: "Unknown"
         val newSong = firstResult?.lyrics?.toSong()?.let(RuntimeBridge::bindPlaybackIdentity)
@@ -374,6 +409,7 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
             )
             RuntimeBridge.report(newSong, source, DownloadManager.currentAudioPath, "已发送歌词到词幕")
             YLog.debug(tag = TAG, msg = "成功加载歌词，source=$source，共 ${newSong.lyrics?.size} 行")
+            if (neutronRequest != null) NeutronLyricPublisher.publish(neutronRequest, newSong.lyrics.orEmpty())
         } else {
             RuntimeBridge.report(lastMetadata?.let { Song(name = it.getString(MediaMetadata.METADATA_KEY_TITLE), artist = it.getString(MediaMetadata.METADATA_KEY_ARTIST)) }, "", DownloadManager.currentAudioPath, "未找到可用歌词")
             YLog.debug(tag = TAG, msg = "未找到歌词，保留现有歌词")

@@ -101,6 +101,7 @@ object DownloadManager {
                 if (generation == requestGeneration.get()) downloadCallback.onDownloadFailed(e)
             }
         }
+        currentTask?.cancel()
         currentTask = scope.launch {
             val options = SearchOptions().apply(block)
             RuntimeBridge.setTrackMetadata(options.trackName, options.artistName, options.albumName, options.durationMs)
@@ -113,6 +114,12 @@ object DownloadManager {
                 return@launch
             }
 
+            fun progress(stage: String) {
+                if (generation == requestGeneration.get()) RuntimeBridge.report(
+                    io.github.proify.lyricon.lyric.model.Song(name = options.trackName, artist = options.artistName, duration = options.durationMs),
+                    "", path, "正在匹配 · $stage")
+            }
+            progress("检查手动选择与目录歌词")
             var fallbackLocalResult: ProviderLyrics? = null
             val catalogMatch = RuntimeBridge.find(options.trackName, options.artistName, path)
             if (catalogMatch != null) {
@@ -133,6 +140,7 @@ object DownloadManager {
 
             // 1. 本地搜索阶段
             if (path != null) {
+                progress("读取音乐内嵌歌词")
                 val embeddedResult = EmbeddedLyricsProvider.searchByAudioFile(
                     audioFilePath = path,
                     trackName = options.trackName,
@@ -153,6 +161,7 @@ object DownloadManager {
                     if (fallbackLocalResult == null) fallbackLocalResult = payload
                 }
 
+                progress("检查音乐同目录歌词")
                 val externalResult = externalProvider.searchByAudioFile(
                     audioFilePath = path,
                     trackName = options.trackName,
@@ -175,6 +184,7 @@ object DownloadManager {
             }
 
             if (options.enableLocalSearch) {
+            progress("搜索本地歌词库")
             val metadataResult = externalProvider.searchByMetadata(
                 trackName = options.trackName,
                 artistName = options.artistName,
@@ -196,7 +206,7 @@ object DownloadManager {
 
             // 2. 云端搜索阶段（不再被本地结果包裹，独立执行）
             }
-            val cloudResult = if (settings.cloudEnabled) searchCloudWordLevelLyricsIncremental(options) else null
+            val cloudResult = if (settings.cloudEnabled) searchCloudWordLevelLyricsIncremental(options, ::progress) else null
 
             if (cloudResult != null) {
                 // 判断云端搜到的是否包含逐字时间轴
@@ -415,7 +425,7 @@ object DownloadManager {
             )
         }
 
-        private suspend fun searchCloudWordLevelLyricsIncremental(options: SearchOptions): ProviderLyrics? {
+        private suspend fun searchCloudWordLevelLyricsIncremental(options: SearchOptions, progress: (String) -> Unit): ProviderLyrics? {
             val normalizedTitle = normalizeTitle(options.trackName)
             val normalizedArtist = normalizeArtist(options.artistName)
             val normalizedAlbum = normalizeAlbum(options.albumName)
@@ -468,11 +478,13 @@ object DownloadManager {
                 }
             }
 
+            progress("搜索云端歌词 · 0/${providers.size} 个来源完成")
             val collectedCandidates = mutableListOf<CloudCandidate>()
             try {
-                repeat(providers.size) {
+                repeat(providers.size) { completed ->
                     val batchResult = channel.receive()
                     collectedCandidates += batchResult.candidates
+                    progress("云端搜索与评分 · ${completed + 1}/${providers.size} 个来源完成")
 
                     val earlyAccepted = batchResult.candidates
                         .filter { RuntimeBridge.settings.wordFirst && it.isWordLevel && it.finalScore >= 99 }
