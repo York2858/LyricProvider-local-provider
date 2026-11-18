@@ -32,7 +32,8 @@ data class ProviderSettings(
     val appleDeveloperToken: String = "",
     val appleLanguage: String = "zh-Hans-CN",
     val appleConfigured: Boolean = false,
-    val matchRules: io.github.proify.lyricon.localprovider.search.MatchRules = io.github.proify.lyricon.localprovider.search.MatchRules()
+    val matchRules: io.github.proify.lyricon.localprovider.search.MatchRules = io.github.proify.lyricon.localprovider.search.MatchRules(),
+    val preferExternalLyrics: Boolean = false
 ) {
     companion object {
         val DEFAULT_PLAYERS = setOf(

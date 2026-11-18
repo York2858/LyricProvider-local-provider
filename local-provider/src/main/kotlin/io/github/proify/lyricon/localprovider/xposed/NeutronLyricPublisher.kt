@@ -8,6 +8,7 @@ import android.os.Parcel
 import android.util.Log
 import io.github.proify.lyricon.localprovider.data.RuntimeBridge
 import io.github.proify.lyricon.localprovider.lyrics.LyricInfoEncoder
+import io.github.proify.lyricon.localprovider.lyrics.LocalTtml
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import org.json.JSONObject
 
@@ -38,7 +39,7 @@ internal object NeutronLyricPublisher {
         }
         val state = previous?.takeIf { it.request.session === session && it.request.track == track }
             ?: Active(Request(session, track, ++generation)).also { active = it }
-        return withLyrics(metadata, state.payload)
+        return withPayload(metadata, state.payload)
     }
 
     @Synchronized
@@ -47,13 +48,20 @@ internal object NeutronLyricPublisher {
             (session == null || it.session === session) && it.track == Track.from(metadata)
         }
 
-    fun publish(request: Request, lines: List<RichLyricLine>) {
+    fun publish(request: Request, lines: List<RichLyricLine>, ttml: String?) {
         runCatching {
             val track = request.track
-            val payload = LyricInfoEncoder.encode(
-                track.title, track.artist, track.album, track.mediaId, request.generation, lines
+            val ttmlLines = ttml?.let(LocalTtml::bridgeLines).orEmpty()
+            val renderedLines = ttmlLines.ifEmpty { lines }
+            val compatible = LyricInfoEncoder.encode(
+                track.title, track.artist, track.album, track.mediaId, request.generation, renderedLines
             ) ?: return
-            mainHandler.post { publishOnMain(request, payload) }
+            val overlay = ttml?.takeIf { ttmlLines.isNotEmpty() }?.let {
+                LyricInfoEncoder.encode(
+                    track.title, track.artist, track.album, track.mediaId, request.generation, renderedLines, it
+                )
+            }
+            mainHandler.post { publishOnMain(request, Payload(compatible, overlay)) }
         }.onFailure { logFailure(it) }
     }
 
@@ -65,17 +73,26 @@ internal object NeutronLyricPublisher {
     }
 
     @Synchronized
-    private fun publishOnMain(request: Request, payload: String) {
+    private fun publishOnMain(request: Request, payload: Payload) {
         val state = active?.takeIf { it.request === request } ?: return
         if (Constants.NEUTRON_PLAYER_PACKAGE !in RuntimeBridge.settings.players) return
         runCatching {
             val metadata = request.session.controller.metadata ?: return
             if (Track.from(metadata) != request.track) return
             state.payload = payload
-            val updated = withLyrics(metadata, payload)
+            val updated = withPayload(metadata, payload)
             if (updated !== metadata) {
                 write(request.session, updated)
-                Log.d(TAG, "Neutron lyricInfo published, generation=${request.generation}")
+                val applied = request.session.controller.metadata?.getString(KEY)
+                val format = when (applied) {
+                    null -> "missing"
+                    payload.overlay -> "TTML+LRC"
+                    payload.compatible -> "LRC"
+                    else -> "missing"
+                }
+                log(Log.INFO, "Neutron lyricInfo published: generation=${request.generation}, format=$format")
+            } else if (metadata.getString(KEY).isNullOrBlank()) {
+                log(Log.WARN, "Neutron lyricInfo skipped: metadata exceeds parcel budget")
             }
         }.onFailure { logFailure(it) }
     }
@@ -89,6 +106,13 @@ internal object NeutronLyricPublisher {
             val updated = withLyrics(metadata, null)
             if (updated !== metadata) write(request.session, updated)
         }.onFailure { logFailure(it) }
+    }
+
+    private fun withPayload(metadata: MediaMetadata, payload: Payload?): MediaMetadata {
+        if (payload == null) return withLyrics(metadata, null)
+        if (payload.overlay != null && metadata.getString(KEY) == payload.overlay) return metadata
+        val withOverlay = payload.overlay?.let { withLyrics(metadata, it) }
+        return withOverlay?.takeIf { it !== metadata } ?: withLyrics(metadata, payload.compatible)
     }
 
     private fun withLyrics(metadata: MediaMetadata, payload: String?): MediaMetadata {
@@ -122,10 +146,15 @@ internal object NeutronLyricPublisher {
     }
 
     fun logFailure(error: Throwable) {
-        Log.w(TAG, "Neutron lyricInfo update skipped: ${error.javaClass.simpleName}")
+        log(Log.WARN, "Neutron lyricInfo update skipped: ${error.javaClass.simpleName}")
     }
 
-    private class Active(val request: Request, var payload: String? = null)
+    private fun log(priority: Int, message: String) {
+        Log.println(priority, TAG, message)
+    }
+
+    private data class Payload(val compatible: String, val overlay: String?)
+    private class Active(val request: Request, var payload: Payload? = null)
 
     class Request internal constructor(
         val session: MediaSession,

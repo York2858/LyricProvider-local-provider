@@ -26,7 +26,9 @@ object AppleMusicTtmlParser {
         val start: Long,
         val end: Long,
         val words: List<ParsedWord>,
-        val agent: String?
+        val agent: String?,
+        val translation: String? = null,
+        val romanization: String? = null
     )
 
     private data class ParsedWord(
@@ -49,13 +51,18 @@ object AppleMusicTtmlParser {
         val type: Long
     )
 
-    fun parse(ttml: String): List<RichLyricLine> {
+    fun isTtmlDocument(ttml: String): Boolean =
+        parseDocument(ttml)?.documentElement?.let {
+            it.localName == "tt" && it.namespaceURI == "http://www.w3.org/ns/ttml"
+        } == true
+
+    fun parse(ttml: String, separateAuxiliaryRoles: Boolean = false): List<RichLyricLine> {
         if (ttml.isBlank()) return emptyList()
 
         val document = parseDocument(ttml) ?: return emptyList()
         val agents = parseAgents(document)
         val agentDirectionMap = computeAgentDirections(agents)
-        val originalLines = parseOriginalLines(document)
+        val originalLines = parseOriginalLines(document, separateAuxiliaryRoles)
         if (originalLines.isEmpty()) return emptyList()
 
         val translatedByKey = parseMetadataMap(document, "translations")
@@ -78,10 +85,12 @@ object AppleMusicTtmlParser {
                 },
                 words = mainWords.takeIf { it.isNotEmpty() }?.toMutableList()
             ).apply {
-                secondary = joinWords(backgroundWords).takeIf { it.isNotBlank() }
-                secondaryWords = backgroundWords.takeIf { it.isNotEmpty() }?.toMutableList()
-                translation = line.key?.let(translatedByKey::get)?.takeIf { it.isNotBlank() }
-                roma = line.key?.let(romanizationByKey::get)?.takeIf { it.isNotBlank() }
+                if (!separateAuxiliaryRoles) {
+                    secondary = joinWords(backgroundWords).takeIf { it.isNotBlank() }
+                    secondaryWords = backgroundWords.takeIf { it.isNotEmpty() }?.toMutableList()
+                }
+                translation = line.translation ?: line.key?.let(translatedByKey::get)?.takeIf { it.isNotBlank() }
+                roma = line.romanization ?: line.key?.let(romanizationByKey::get)?.takeIf { it.isNotBlank() }
                 isAlignedRight = agentDirectionMap[line.agent] == LyricDirection.RIGHT
             }
         }
@@ -130,7 +139,7 @@ object AppleMusicTtmlParser {
         }
     }
 
-    private fun parseOriginalLines(document: Document): List<ParsedLine> {
+    private fun parseOriginalLines(document: Document, separateAuxiliaryRoles: Boolean): List<ParsedLine> {
         val root = document.documentElement ?: return emptyList()
         val body = findFirstElementByName(root, "body") ?: return emptyList()
         val pElements = collectElementsByName(body, "p")
@@ -146,10 +155,19 @@ object AppleMusicTtmlParser {
             val lineEndCandidate = parseTimestamp(attribute(element, "end"))
                 ?: parseTimestamp(attribute(element, "dur"))?.let { lineStart + it }
 
+            val translation = if (separateAuxiliaryRoles) inlineText(element, "x-translation") else null
+            val romanization = if (separateAuxiliaryRoles) inlineText(element, "x-roman") else null
+            if (separateAuxiliaryRoles) {
+                collectElementsByName(element, "span").filter { span ->
+                    hasRole(span, "x-translation") || hasRole(span, "x-roman")
+                }.forEach { span -> span.parentNode.removeChild(span) }
+            }
+
             val tempWords = parseWords(
                 lineElement = element,
                 lineStart = lineStart,
-                lineAgent = lineAgent
+                lineAgent = lineAgent,
+                preserveSpaces = separateAuxiliaryRoles
             )
 
             val words = if (tempWords.isNotEmpty()) {
@@ -182,7 +200,9 @@ object AppleMusicTtmlParser {
                 start = lineStart,
                 end = lineEnd,
                 words = words,
-                agent = lineAgent
+                agent = lineAgent,
+                translation = translation,
+                romanization = romanization
             )
             fallbackStart = max(fallbackStart, lineEnd)
         }
@@ -193,15 +213,21 @@ object AppleMusicTtmlParser {
     private fun parseWords(
         lineElement: Element,
         lineStart: Long,
-        lineAgent: String?
+        lineAgent: String?,
+        preserveSpaces: Boolean
     ): List<TempWord> {
         val words = mutableListOf<TempWord>()
         var cursor = lineStart
         val children = lineElement.childNodes
 
         for (index in 0 until children.length) {
+            val child = children.item(index)
+            if (preserveSpaces && child.nodeType == Node.TEXT_NODE && child.nodeValue.isNotEmpty()
+                && child.nodeValue.isBlank() && words.isNotEmpty() && !words.last().text.endsWith(' ')) {
+                words[words.lastIndex] = words.last().copy(text = words.last().text + " ")
+            }
             cursor = collectWords(
-                node = children.item(index),
+                node = child,
                 fallbackStart = cursor,
                 inheritedAgent = lineAgent,
                 inheritedBackground = false,
@@ -275,11 +301,19 @@ object AppleMusicTtmlParser {
         return end ?: start
     }
 
-    private fun hasBackgroundRole(element: Element): Boolean {
+    private fun inlineText(line: Element, role: String): String? {
+        val children = line.childNodes
+        return (0 until children.length).asSequence().mapNotNull { children.item(it) as? Element }
+            .filter { hasRole(it, role) }.map(::extractText).firstOrNull { it.isNotBlank() }
+    }
+
+    private fun hasBackgroundRole(element: Element): Boolean = hasRole(element, BACKGROUND_ROLE)
+
+    private fun hasRole(element: Element, expected: String): Boolean {
         val role = attribute(element, "ttm:role") ?: attribute(element, "role") ?: return false
         return role
             .split(Regex("\\s+"))
-            .any { it.equals(BACKGROUND_ROLE, ignoreCase = true) }
+            .any { it.equals(expected, ignoreCase = true) }
     }
 
     private fun normalizeWords(

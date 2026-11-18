@@ -122,16 +122,44 @@ object DownloadManager {
             progress("检查手动选择与目录歌词")
             var fallbackLocalResult: ProviderLyrics? = null
             val catalogMatch = RuntimeBridge.find(options.trackName, options.artistName, path)
-            if (catalogMatch != null) {
-                val (song, manual) = catalogMatch
+            val catalogResult = catalogMatch?.let { match ->
                 val result = LyricsResult(trackName = options.trackName, artistName = options.artistName,
-                    albumName = options.albumName, rich = song.lyrics.orEmpty())
-                val payload = ProviderLyrics(CloudProviderPlaceholder(if (manual) "手动选择" else "目录歌词"), result)
-                if (manual || !settings.wordFirst || containsWordLevelLyrics(result)) {
-                    guardedCallback.onDownloadFinished(listOf(payload))
+                    albumName = options.albumName, rich = match.song.lyrics.orEmpty(), ttml = match.ttml)
+                ProviderLyrics(CloudProviderPlaceholder(if (match.manual) "手动选择" else "目录歌词"), result)
+            }
+            if (downloadCallback is NeutronDownloadCallback && generation == requestGeneration.get()) {
+                // Keep the regular lyric selection intact. An explicit manual choice wins,
+                // including when its offset requires publishing just the adjusted LRC.
+                val bridgeTtml = if (catalogMatch?.manual == true) catalogMatch.ttml
+                    else path?.let(externalProvider::bridgeTtmlByAudioFile) ?: catalogMatch?.ttml
+                downloadCallback.onBridgeTtml(bridgeTtml)
+            }
+            suspend fun findSidecar() = path?.let {
+                externalProvider.searchByAudioFile(it, options.trackName, options.artistName, options.albumName)
+            }
+            suspend fun findInFileFolders() = if (options.enableLocalSearch) {
+                externalProvider.searchByMetadata(options.trackName, options.artistName, options.albumName)
+            } else null
+
+            if (catalogMatch?.manual == true && catalogResult != null) {
+                guardedCallback.onDownloadFinished(listOf(catalogResult))
+                return@launch
+            }
+            if (settings.preferExternalLyrics) {
+                progress("优先检查外部歌词文件")
+                val preferred = catalogResult?.takeIf { catalogMatch?.embedded == false }
+                    ?: (findSidecar() ?: findInFileFolders())?.let { ProviderLyrics(externalProvider, it) }
+                if (preferred != null) {
+                    guardedCallback.onDownloadFinished(listOf(preferred))
                     return@launch
                 }
-                fallbackLocalResult = payload
+            }
+            if (catalogResult != null) {
+                if (!settings.wordFirst || containsWordLevelLyrics(catalogResult.lyrics)) {
+                    guardedCallback.onDownloadFinished(listOf(catalogResult))
+                    return@launch
+                }
+                fallbackLocalResult = catalogResult
             }
             YLog.warn(
                 tag = TAG,
@@ -162,12 +190,7 @@ object DownloadManager {
                 }
 
                 progress("检查音乐同目录歌词")
-                val externalResult = externalProvider.searchByAudioFile(
-                    audioFilePath = path,
-                    trackName = options.trackName,
-                    artistName = options.artistName,
-                    albumName = options.albumName
-                )
+                val externalResult = if (settings.preferExternalLyrics) null else findSidecar()
                 if (externalResult != null) {
                     val payload = ProviderLyrics(externalProvider, externalResult)
                     if (!settings.wordFirst || containsWordLevelLyrics(externalResult)) {
@@ -183,13 +206,9 @@ object DownloadManager {
                 }
             }
 
-            if (options.enableLocalSearch) {
+            if (options.enableLocalSearch && !settings.preferExternalLyrics) {
             progress("搜索本地歌词库")
-            val metadataResult = externalProvider.searchByMetadata(
-                trackName = options.trackName,
-                artistName = options.artistName,
-                albumName = options.albumName
-            )
+            val metadataResult = findInFileFolders()
             if (metadataResult != null) {
                 val payload = ProviderLyrics(externalProvider, metadataResult)
                 if (!settings.wordFirst || containsWordLevelLyrics(metadataResult)) {

@@ -5,7 +5,7 @@ local.properties
 
 # IDE
 /.idea/
-/.kotlin/
+.kotlin/
 
 # Build outputs
 /build

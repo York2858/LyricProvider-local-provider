@@ -15,7 +15,7 @@ open class HookEntry : IYukiHookXposedInit {
 
     override fun onHook() {
         YukiHookAPI.encase {
-            // 原有 LocalProvider（支持 MediaSession 的通用播放器）
+            loadApp(Constants.SYSTEM_UI_PACKAGE, NeutronSystemUiCompat)
             loadApp(isExcludeSelf = true, LocalProvider)
             // 新增 PowerAmp 专用 Hooker（支持 PowerAmp 广播和内嵌歌词）
             loadApp("com.maxmpz.audioplayer", PowerAmp)

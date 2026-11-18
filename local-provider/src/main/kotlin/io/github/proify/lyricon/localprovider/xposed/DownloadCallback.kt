@@ -11,3 +11,7 @@ interface DownloadCallback {
     fun onDownloadFinished(response: List<ProviderLyrics>)
     fun onDownloadFailed(e: Exception)
 }
+
+internal interface NeutronDownloadCallback : DownloadCallback {
+    fun onBridgeTtml(ttml: String?)
+}

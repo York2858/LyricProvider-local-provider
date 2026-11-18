@@ -16,4 +16,5 @@ data class LyricsResult(
     val albumName: String? = null,
     val rich: List<RichLyricLine> = emptyList(),
     val instrumental: Boolean = false,
+    val ttml: String? = null,
 )

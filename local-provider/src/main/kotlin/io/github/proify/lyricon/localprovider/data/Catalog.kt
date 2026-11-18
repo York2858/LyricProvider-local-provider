@@ -6,13 +6,14 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import io.github.proify.lrckit.EnhanceLrcParser
 import io.github.proify.lyricon.localprovider.lyrics.LyricNormalizer
+import io.github.proify.lyricon.localprovider.lyrics.LocalTtml
 import io.github.proify.lyricon.lyric.model.Song
 import java.io.File
 import java.util.Locale
 
 data class LyricFile(
     val uri: String, val filename: String, val directory: String, val modified: Long,
-    val song: Song, val embedded: Boolean = false, val album: String = ""
+    val song: Song, val embedded: Boolean = false, val album: String = "", val ttml: String? = null
 ) {
     val wordLevel: Boolean get() = LyricTiming.hasWordTiming(song.lyrics.orEmpty())
     val romanization: Boolean get() = song.lyrics.orEmpty().any { !it.roma.isNullOrBlank() }
@@ -124,15 +125,15 @@ object Catalog {
     }
     internal fun parse(uri: String, name: String, directory: String, modified: Long, raw: String): LyricFile? {
         if (name.endsWith(".lrc", true) && io.github.proify.lyricon.localprovider.lyrics.AtomicLyricFile.clearlyInvalid(raw)) return null
-        val doc = EnhanceLrcParser.parse(if (name.endsWith(".ttml", true)) "" else raw)
-        val parsed = if (name.endsWith(".ttml", true))
-            io.github.proify.cloudlyric.provider.apple.AppleMusicTtmlParser.parse(raw) else doc.lines
+        val isTtml = name.endsWith(".ttml", true)
+        val doc = if (isTtml) null else EnhanceLrcParser.parse(raw)
+        val parsed = doc?.lines ?: LocalTtml.parse(raw)
         val lines = LyricNormalizer.normalizeForTripleLine(parsed)
         if (lines.isEmpty()) return null
         return LyricFile(uri, name, directory, modified, Song(
-            name = doc.metadata["ti"]?.takeIf { it.isNotBlank() } ?: name.substringBeforeLast('.'),
-            artist = doc.metadata["ar"], lyrics = lines, duration = lines.lastOrNull()?.end ?: 0
-        ))
+            name = doc?.metadata?.get("ti")?.takeIf { it.isNotBlank() } ?: name.substringBeforeLast('.'),
+            artist = doc?.metadata?.get("ar"), lyrics = lines, duration = lines.lastOrNull()?.end ?: 0
+        ), ttml = if (isTtml) LocalTtml.forBridge(raw) else null)
     }
     /** Exact filename/title matching only. Ambiguous matches wait for manual selection. */
     @Synchronized fun find(context: Context, title: String?, artist: String?, audioPath: String?): LyricFile? {
@@ -169,7 +170,7 @@ object Catalog {
         }.getOrDefault(false)
     }
     private fun applyChoice(file: LyricFile, choice: SongChoice): LyricFile = if (choice.offset == 0L) file else
-        file.copy(song = file.song.copy(lyrics = file.song.lyrics?.map { line ->
+        file.copy(ttml = null, song = file.song.copy(lyrics = file.song.lyrics?.map { line ->
             line.copy(begin = (line.begin + choice.offset).coerceAtLeast(0),
                 end = (line.end + choice.offset).coerceAtLeast(0),
                 words = line.words?.map { word -> word.copy(begin = (word.begin + choice.offset).coerceAtLeast(0),

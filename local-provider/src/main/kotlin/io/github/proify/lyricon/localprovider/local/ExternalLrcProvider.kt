@@ -4,6 +4,7 @@ import io.github.proify.lrckit.EnhanceLrcParser
 import io.github.proify.lyricon.localprovider.data.FileIndex
 import io.github.proify.lyricon.localprovider.data.LocalScan
 import io.github.proify.lyricon.localprovider.data.RuntimeBridge
+import io.github.proify.lyricon.localprovider.lyrics.LocalTtml
 import io.github.proify.lyricon.localprovider.model.LyricsProvider
 import io.github.proify.lyricon.localprovider.model.LyricsResult
 import io.github.proify.lyricon.localprovider.xposed.LocalProvider
@@ -32,22 +33,40 @@ class ExternalLrcProvider : LyricsProvider {
         if (file.length() > 2_000_000) return@read null
         val raw = runCatching { file.readText() }.getOrNull() ?: return@read null
         if (io.github.proify.lyricon.localprovider.lyrics.AtomicLyricFile.clearlyInvalid(raw)) return@read null
-        val doc = EnhanceLrcParser.parse(raw)
-        val lines = LocalProvider.normalizeForTripleLine(doc.lines).filter { line ->
+        val isTtml = file.extension.equals("ttml", true)
+        val doc = if (isTtml) null else EnhanceLrcParser.parse(raw)
+        val lines = LocalProvider.normalizeForTripleLine(doc?.lines ?: LocalTtml.parse(raw)).filter { line ->
             listOf("浣滄洸", "浣滆瘝", "缂栨洸").none { line.text.orEmpty().contains(it, true) }
         }
-        if (lines.isEmpty()) null else LyricsResult(trackName = doc.metadata["ti"], artistName = doc.metadata["ar"],
-            albumName = doc.metadata["al"], rich = lines)
+        if (lines.isEmpty()) null else LyricsResult(
+            trackName = doc?.metadata?.get("ti") ?: file.nameWithoutExtension.takeIf { isTtml },
+            artistName = doc?.metadata?.get("ar"), albumName = doc?.metadata?.get("al"),
+            rich = lines, ttml = if (isTtml) LocalTtml.forBridge(raw) else null
+        )
     }
+    internal fun bridgeTtmlByAudioFile(audioFilePath: String): String? = synchronized(this) {
+        configure()
+        val audio = File(audioFilePath)
+        val directory = audio.parentFile ?: return@synchronized null
+        if (!audio.isFile) return@synchronized null
+        val lowerCase = File(directory, "${audio.nameWithoutExtension}.ttml")
+        val ttml = lowerCase.takeIf(File::isFile) ?: directory.listFiles()?.singleOrNull {
+            it.isFile && it.name.equals(lowerCase.name, ignoreCase = true)
+        }
+        ttml?.let(::read)?.ttml
+    }
+
     suspend fun searchByAudioFile(audioFilePath: String, trackName: String?, artistName: String?, albumName: String?): LyricsResult? = withContext(Dispatchers.IO) {
         synchronized(this@ExternalLrcProvider) {
             configure()
             val audio = File(audioFilePath)
             if (!audio.isFile) return@synchronized null
-            val file = File(audio.parentFile ?: return@synchronized null, "${audio.nameWithoutExtension}.lrc")
-            if (!file.isFile) return@synchronized null
-            read(file)?.let { LyricsResult(trackName = trackName ?: it.trackName, artistName = artistName ?: it.artistName,
-                albumName = albumName ?: it.albumName, rich = it.rich) }
+            val directory = audio.parentFile ?: return@synchronized null
+            sequenceOf("lrc", "ttml").map { File(directory, "${audio.nameWithoutExtension}.$it") }
+                .filter { it.isFile }.mapNotNull(::read).firstOrNull()?.let {
+                    it.copy(trackName = trackName ?: it.trackName, artistName = artistName ?: it.artistName,
+                        albumName = albumName ?: it.albumName)
+                }
         }
     }
     suspend fun searchByMetadata(trackName: String?, artistName: String?, albumName: String?): LyricsResult? = withContext(Dispatchers.IO) {
@@ -60,7 +79,8 @@ class ExternalLrcProvider : LyricsProvider {
                 val values = mutableListOf<Pair<File, LyricsResult>>()
                 RuntimeBridge.settings.folders.filter { it.uri.startsWith("/") }.forEach { folder ->
                     File(folder.uri).takeIf { it.isDirectory }?.let(LocalScan::files)?.forEach { file ->
-                        if (file.isFile && file.extension.equals("lrc", true) && seen.add(file.absolutePath)) read(file)?.let { values += file to it }
+                        if ((file.extension.equals("lrc", true) || file.extension.equals("ttml", true)) &&
+                            seen.add(file.absolutePath)) read(file)?.let { values += file to it }
                     }
                 }
                 // Drop removed files from the parsed fallback index.

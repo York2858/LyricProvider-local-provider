@@ -132,13 +132,15 @@ object RuntimeBridge {
         if (reload && !wasPreviewing) lastPlayback?.takeIf { it.track == trackKey(trackMetadata.title, trackMetadata.artist) }?.let(::publishPlayback)
         if (reload && changed) onReload?.invoke()
     }
-    suspend fun find(title: String?, artist: String?, path: String?): Pair<Song, Boolean>? = runCatching {
+    data class LocalMatch(val song: Song, val manual: Boolean, val ttml: String?, val embedded: Boolean)
+
+    suspend fun find(title: String?, artist: String?, path: String?): LocalMatch? = runCatching {
         val app = context ?: return null
         val result = ModuleConnection.call(app, "find", Bundle().apply {
             putString("title", title); putString("artist", artist); putString("path", path)
         })
         val song = ProviderStore.json.decodeFromString<Song>(result.getString("song") ?: return null)
-        song to result.getBoolean("manual")
+        LocalMatch(song, result.getBoolean("manual"), result.getString("ttml"), result.getBoolean("embedded"))
     }.getOrElse {
         if (it is kotlinx.coroutines.CancellationException) throw it
         android.util.Log.w("LocalProvider", "Directory lyrics unavailable: ${it.javaClass.simpleName}")

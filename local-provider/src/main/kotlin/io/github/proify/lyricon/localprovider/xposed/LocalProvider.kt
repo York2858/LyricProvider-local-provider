@@ -50,7 +50,7 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
     private var lastMetadata: MediaMetadata? = null
 
     override fun onHook() {
-        if (processName == POWERAMP_PACKAGE) return
+        if (processName == POWERAMP_PACKAGE || packageName == Constants.SYSTEM_UI_PACKAGE) return
         // YLog.debug(tag = TAG, msg = "========== LocalProvider 已注入，进程名=$processName ==========")
 
         onAppLifecycle {
@@ -386,9 +386,15 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
     }
 
     private fun downloadCallback(request: NeutronLyricPublisher.Request?): DownloadCallback =
-        if (request == null) this else object : DownloadCallback by this {
+        if (request == null) this else object : NeutronDownloadCallback {
+            private var bridgeTtml: String? = null
+
+            override fun onBridgeTtml(ttml: String?) { bridgeTtml = ttml }
+
             override fun onDownloadFinished(response: List<ProviderLyrics>) =
-                handleDownloadFinished(response, request)
+                handleDownloadFinished(response, request, bridgeTtml)
+
+            override fun onDownloadFailed(e: Exception) = this@LocalProvider.onDownloadFailed(e)
         }
 
     override fun onDownloadFinished(response: List<ProviderLyrics>) =
@@ -396,7 +402,8 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
 
     private fun handleDownloadFinished(
         response: List<ProviderLyrics>,
-        neutronRequest: NeutronLyricPublisher.Request?
+        neutronRequest: NeutronLyricPublisher.Request?,
+        bridgeTtml: String? = null
     ) {
         val firstResult = response.firstOrNull()
         val source = firstResult?.provider?.id ?: "Unknown"
@@ -409,10 +416,12 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
             )
             RuntimeBridge.report(newSong, source, DownloadManager.currentAudioPath, "已发送歌词到词幕")
             YLog.debug(tag = TAG, msg = "成功加载歌词，source=$source，共 ${newSong.lyrics?.size} 行")
-            if (neutronRequest != null) NeutronLyricPublisher.publish(neutronRequest, newSong.lyrics.orEmpty())
         } else {
             RuntimeBridge.report(lastMetadata?.let { Song(name = it.getString(MediaMetadata.METADATA_KEY_TITLE), artist = it.getString(MediaMetadata.METADATA_KEY_ARTIST)) }, "", DownloadManager.currentAudioPath, "未找到可用歌词")
             YLog.debug(tag = TAG, msg = "未找到歌词，保留现有歌词")
+        }
+        if (neutronRequest != null) {
+            NeutronLyricPublisher.publish(neutronRequest, newSong?.lyrics.orEmpty(), bridgeTtml ?: firstResult?.lyrics?.ttml)
         }
     }
 

@@ -825,6 +825,9 @@ class MainActivity : AppCompatActivity() {
         section("匹配与保存")
         card {
             addView(settingsItem("匹配评分规则","","sliders") { open("matching") })
+            addView(settingsToggle("优先外部歌词文件","优先使用匹配的 LRC 或 TTML；没找到时沿用原规则","folder",s.preferExternalLyrics) { v ->
+                update { it.copy(preferExternalLyrics = v) }
+            })
             addView(settingsToggle("逐字优先","本地逐行时继续查找逐字","info",s.wordFirst) { v -> update { it.copy(wordFirst=v) } })
             addView(settingsToggle("保存云端歌词","沿用音乐文件名","cloud",s.saveCloud) { v -> update { it.copy(saveCloud=v) } })
         }

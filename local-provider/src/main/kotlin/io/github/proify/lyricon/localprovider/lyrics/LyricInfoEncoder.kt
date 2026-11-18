@@ -16,7 +16,8 @@ internal object LyricInfoEncoder {
         album: String?,
         mediaId: String?,
         generation: Long,
-        lines: List<RichLyricLine>
+        lines: List<RichLyricLine>,
+        ttml: String? = null
     ): String? {
         val rows = lines.asSequence().filter { it.begin >= 0 }.sortedBy { it.begin }.mapNotNull { line ->
             val text = clean(line.text).ifBlank {
@@ -39,6 +40,7 @@ internal object LyricInfoEncoder {
             put("lyricType", 0)
             put("noLyric", false)
             put("lyric", rows.joinToString("\n") { it.plain })
+            ttml?.let { put("ttml", it) }
             if (rows.any { it.enhanced != null }) {
                 put("rawLyric", rows.joinToString("\n") { it.enhanced ?: it.plain })
             }
