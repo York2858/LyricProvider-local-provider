@@ -24,8 +24,8 @@ configure<ApplicationExtension> {
         minSdk = 27
         targetSdk = 36
         testInstrumentationRunner = providers.gradleProperty("localProviderTestRunner").getOrElse("androidx.test.runner.AndroidJUnitRunner")
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.1.0"
 
         ndk {
             abiFilters.add("arm64-v8a")

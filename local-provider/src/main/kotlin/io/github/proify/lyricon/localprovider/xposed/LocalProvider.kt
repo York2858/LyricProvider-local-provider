@@ -21,6 +21,7 @@ import com.kyant.taglib.TagLib
 import io.github.proify.lrckit.EnhanceLrcParser
 import io.github.proify.lyricon.localprovider.model.ProviderLyrics
 import io.github.proify.lyricon.localprovider.model.LyricsResult
+import io.github.proify.lyricon.lyric.model.LyricMetadata
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
 import io.github.proify.lyricon.provider.LyriconFactory
@@ -70,6 +71,7 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
 
     private fun initProvider() {
         val context = appContext ?: return
+        runCatching { NeutronLyricPublisher.initialize(context) }.onFailure(NeutronLyricPublisher::logFailure)
         RuntimeBridge.initialize(context) {
             if (context.packageName !in RuntimeBridge.settings.players) {
                 DownloadManager.cancel()
@@ -110,7 +112,18 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
                 name = "setPlaybackState"
                 parameters(PlaybackState::class.java)
             }.hook {
+                before {
+                    if (appContext?.packageName != Constants.NEUTRON_PLAYER_PACKAGE ||
+                        NeutronLyricPublisher.isWritingPlaybackState()) return@before
+                    runCatching {
+                        val session = instance as? MediaSession ?: return@runCatching
+                        val state = args[0] as? PlaybackState ?: return@runCatching
+                        args[0] = NeutronLyricPublisher.preparePlaybackState(session, state)
+                    }.onFailure(NeutronLyricPublisher::logFailure)
+                }
                 after {
+                    if (appContext?.packageName == Constants.NEUTRON_PLAYER_PACKAGE &&
+                        NeutronLyricPublisher.isWritingPlaybackState()) return@after
                     runCatching {
                         val state = args[0] as? PlaybackState ?: return@runCatching
                         if (appContext?.packageName !in RuntimeBridge.settings.players) return@runCatching
@@ -147,8 +160,12 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
                         NeutronLyricPublisher.isWritingMetadata()
                     ) return@after
                     runCatching {
-                        val metadata = args[0] as? MediaMetadata ?: return@runCatching
                         val session = instance as? MediaSession
+                        val metadata = args[0] as? MediaMetadata
+                        if (appContext?.packageName == Constants.NEUTRON_PLAYER_PACKAGE && session != null) {
+                            NeutronLyricPublisher.onMetadataPublished(session, metadata)
+                        }
+                        if (metadata == null) return@runCatching
                         session?.let {
                             appContext?.let { PreferenceReporter.metadata(it, session, metadata) }
                         }
@@ -408,6 +425,13 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
         val firstResult = response.firstOrNull()
         val source = firstResult?.provider?.id ?: "Unknown"
         val newSong = firstResult?.lyrics?.toSong()?.let(RuntimeBridge::bindPlaybackIdentity)
+        if (neutronRequest != null) {
+            val sourceId = NeutronLyricPublisher.publish(neutronRequest, newSong?.lyrics.orEmpty(),
+                bridgeTtml ?: firstResult?.lyrics?.ttml)
+            if (sourceId != null && newSong != null) {
+                newSong.metadata = LyricMetadata(newSong.metadata.orEmpty() + (NeutronLyricPublisher.SOURCE_KEY to sourceId))
+            }
+        }
         if (newSong != null && newSong.lyrics?.isNotEmpty() == true) {
             provider?.player?.setSong(newSong)
             BridgeV4Sender.sendLyrics(
@@ -419,9 +443,6 @@ object LocalProvider : YukiBaseHooker(), DownloadCallback {
         } else {
             RuntimeBridge.report(lastMetadata?.let { Song(name = it.getString(MediaMetadata.METADATA_KEY_TITLE), artist = it.getString(MediaMetadata.METADATA_KEY_ARTIST)) }, "", DownloadManager.currentAudioPath, "未找到可用歌词")
             YLog.debug(tag = TAG, msg = "未找到歌词，保留现有歌词")
-        }
-        if (neutronRequest != null) {
-            NeutronLyricPublisher.publish(neutronRequest, newSong?.lyrics.orEmpty(), bridgeTtml ?: firstResult?.lyrics?.ttml)
         }
     }
 

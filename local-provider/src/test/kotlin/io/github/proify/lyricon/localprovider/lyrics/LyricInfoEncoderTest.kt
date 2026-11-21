@@ -19,6 +19,16 @@ class LyricInfoEncoderTest {
     @get:Rule val files = TemporaryFolder()
 
     @Test
+    fun writebackOnlyChangesTheTranslationLane() {
+        val original = LyricInfoEncoder.encode("Song", "Artist", null, "42", 7, LocalTtml.bridgeLines(duet), duet)!!
+        val updated = LyricInfoEncoder.withTranslation(original, "[00:01.000]AI translation")
+        val originalFields = Json.parseToJsonElement(original).jsonObject
+        val updatedFields = Json.parseToJsonElement(updated).jsonObject
+        assertEquals("[00:01.000]AI translation", updatedFields["translationLyric"]?.jsonPrimitive?.content)
+        assertEquals(originalFields - "translationLyric", updatedFields - "translationLyric")
+    }
+
+    @Test
     fun localTtmlSidecarProducesNativeLrcAndAnUnflattenedOverlay() = runBlocking {
         val audio = files.newFile("Song.flac")
         files.newFile("Song.ttml").writeText(duet)

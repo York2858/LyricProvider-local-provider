@@ -2,6 +2,10 @@ package io.github.proify.lyricon.localprovider.lyrics
 
 import io.github.proify.lyricon.lyric.model.LyricWord
 import io.github.proify.lyricon.lyric.model.RichLyricLine
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.Locale
@@ -9,6 +13,10 @@ import java.util.Locale
 /** ColorOS uses the plain lane; Bridge can also render the separate timed words and translation. */
 internal object LyricInfoEncoder {
     const val SOURCE = "lyricprovider/local-provider/neutron"
+
+    fun withTranslation(payload: String, translation: String): String = JsonObject(
+        Json.parseToJsonElement(payload).jsonObject + ("translationLyric" to JsonPrimitive(translation))
+    ).toString()
 
     fun encode(
         title: String,
